@@ -147,19 +147,36 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
       }).sort((a, b) => b.value - a.value);
 
     } else {
+      // Total Asset View: Group by Category
       const grouped = endSnapshot.assets.reduce((acc, curr) => {
-        const cat = curr.category === 'security' ? '股票基金' : 
-                    curr.category === 'gold' ? '实物商品' : 
-                    curr.category === 'fixed' ? '现金定存' : '其他';
+        let cat = '其他';
+        
+        switch (curr.category) {
+          case 'security':
+          case 'fund':
+            cat = '股票基金'; // Equity
+            break;
+          case 'fixed':
+          case 'wealth':
+            cat = '现金固收'; // Fixed Income
+            break;
+          case 'gold':
+          case 'crypto':
+            cat = '商品另类'; // Alternative / Commodities
+            break;
+          default:
+            cat = '其他';
+        }
+
         acc[cat] = (acc[cat] || 0) + curr.marketValue;
         return acc;
       }, {} as Record<string, number>);
 
       const colors: Record<string, string> = {
-        '股票基金': '#3b82f6',
-        '实物商品': '#f59e0b',
-        '现金定存': '#64748b',
-        '其他': '#a855f7'
+        '股票基金': '#3b82f6', // Blue
+        '商品另类': '#f59e0b', // Amber
+        '现金固收': '#64748b', // Slate
+        '其他': '#a855f7'      // Purple
       };
 
       return Object.keys(grouped).map(key => ({

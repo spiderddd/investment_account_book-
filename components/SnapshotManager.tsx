@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Plus, Calendar, Trash2, Coins, Landmark, Briefcase, TrendingUp, DollarSign, Save, X, Activity, Search, FileText, ChevronDown, ChevronUp, ArrowRight } from 'lucide-react';
+import { Plus, Calendar, Trash2, Coins, Landmark, Briefcase, TrendingUp, DollarSign, Save, X, Activity, Search, FileText, ChevronDown, ChevronUp, ArrowRight, Wallet, Bitcoin } from 'lucide-react';
 import { SnapshotItem, StrategyVersion, AssetRecord, AssetCategory, Asset } from '../types';
 import { generateId, StorageService } from '../services/storageService';
 
@@ -266,10 +266,12 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
   const getCategoryIcon = (c: AssetCategory) => {
     switch (c) {
       case 'security': return <TrendingUp size={16} className="text-blue-600"/>;
+      case 'fund': return <Briefcase size={16} className="text-indigo-600"/>;
       case 'wealth': return <Landmark size={16} className="text-cyan-600"/>;
       case 'gold': return <Coins size={16} className="text-amber-600"/>;
-      case 'fixed': return <Briefcase size={16} className="text-slate-600"/>; // Using Briefcase for cash bag concept or just a simple icon
-      default: return <Briefcase size={16} className="text-purple-600"/>;
+      case 'fixed': return <Wallet size={16} className="text-slate-600"/>; 
+      case 'crypto': return <Bitcoin size={16} className="text-purple-600"/>; 
+      default: return <Briefcase size={16} className="text-pink-600"/>;
     }
   };
 
