@@ -22,7 +22,7 @@ const CATEGORIES: { value: AssetCategory; label: string; icon: any; color: strin
   { value: 'wealth', label: '银行理财', icon: Landmark, color: 'text-cyan-600 bg-cyan-50' },
   { value: 'gold', label: '黄金/商品', icon: Coins, color: 'text-amber-600 bg-amber-50' },
   { value: 'fixed', label: '现金/存款', icon: Wallet, color: 'text-slate-600 bg-slate-50' },
-  { value: 'crypto', label: '加密货币', icon: Briefcase, color: 'text-purple-600 bg-purple-50' }, // Reusing Briefcase for simplicity or could import Bitcoin icon
+  { value: 'crypto', label: '加密货币', icon: Briefcase, color: 'text-purple-600 bg-purple-50' }, 
   { value: 'other', label: '其他资产', icon: Briefcase, color: 'text-pink-600 bg-pink-50' },
 ];
 
@@ -155,14 +155,15 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
 
     filtered.forEach(asset => {
       const perf = assetPerformanceMap.get(asset.id);
-      if (perf) {
-          if (!perf.isHistorical) {
-            held.push(asset);
-            totalVal += perf.marketValue;
-            totalProfit += (perf.marketValue - perf.totalCost);
-          } else {
-            cleared.push(asset);
-          }
+      
+      // If asset is currently held (exists in map AND not historical)
+      if (perf && !perf.isHistorical) {
+        held.push(asset);
+        totalVal += perf.marketValue;
+        totalProfit += (perf.marketValue - perf.totalCost);
+      } else {
+        // Either historical (cleared) or new (no record)
+        cleared.push(asset);
       }
     });
 
@@ -217,76 +218,95 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
     const Icon = meta.icon;
     const status = assetPerformanceMap.get(asset.id);
 
-    if (!status) return null;
-
-    const profit = status.marketValue - status.totalCost;
-    const roi = status.totalCost > 0 ? (profit / status.totalCost) * 100 : 0;
+    // Calculate metrics or defaults for new assets
+    const marketValue = status ? status.marketValue : 0;
+    const totalCost = status ? status.totalCost : 0;
+    const profit = marketValue - totalCost;
+    const roi = totalCost > 0 ? (profit / totalCost) * 100 : 0;
     const isProfitable = profit >= 0;
 
+    // Chinese Red/Green Convention
     const trendColor = isProfitable ? 'text-rose-600' : 'text-emerald-600';
     const trendBg = isProfitable ? 'bg-rose-50' : 'bg-emerald-50';
+    const trendSign = isProfitable ? '+' : '';
 
     return (
-      <div key={asset.id} className={`bg-white p-4 rounded-xl shadow-sm border ${isHeld ? 'border-slate-100' : 'border-slate-100 bg-slate-50/50'} hover:shadow-md transition-shadow group relative flex flex-col justify-between`}>
-        <div>
-            {/* Header Row */}
-            <div className="flex justify-between items-start mb-2">
-                <div 
-                  className="flex items-center gap-3 overflow-hidden flex-1 cursor-pointer hover:opacity-80 transition-opacity"
-                  onClick={() => setViewHistoryId(asset.id)}
-                >
-                    <div className={`p-2 rounded-lg shrink-0 ${isHeld ? meta.color : 'bg-slate-100 text-slate-400'}`}>
-                        <Icon size={20} />
+      <div 
+        key={asset.id} 
+        className={`bg-white rounded-xl border transition-all duration-200 group relative flex flex-col justify-between
+          ${isHeld 
+            ? 'border-slate-100 shadow-sm hover:shadow-md' 
+            : 'border-slate-100 bg-slate-50 opacity-60 hover:opacity-100 hover:shadow-sm'
+          }`}
+      >
+        <div 
+           className="p-5 flex-1 cursor-pointer"
+           onClick={() => setViewHistoryId(asset.id)}
+        >
+            {/* Header: Identity */}
+            <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3">
+                    <div className={`p-2.5 rounded-xl shrink-0 ${isHeld ? meta.color : 'bg-slate-200 text-slate-400 grayscale'}`}>
+                        <Icon size={22} />
                     </div>
-                    <div className="min-w-0 flex-1">
-                         <div className="flex items-center justify-between">
-                             <h3 className="font-bold text-slate-800 text-base truncate pr-2">{asset.name}</h3>
-                             {status.totalCost > 0 && (
-                                <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded shrink-0 ${trendBg} ${trendColor}`}>
-                                    {isProfitable ? '+' : ''}{roi.toFixed(1)}%
-                                </span>
-                            )}
-                         </div>
-                         <div className="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
-                            {asset.ticker && <span className="font-mono">{asset.ticker}</span>}
+                    <div>
+                        <h3 className={`font-bold text-base leading-tight ${isHeld ? 'text-slate-800' : 'text-slate-600'}`}>
+                            {asset.name}
+                        </h3>
+                        <div className="flex items-center gap-2 text-xs text-slate-400 mt-1">
+                            {asset.ticker && <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">{asset.ticker}</span>}
                             <span>{meta.label}</span>
-                            {!isHeld && <span>· {status.date} (已清仓)</span>}
-                         </div>
+                        </div>
                     </div>
                 </div>
                 
                 {/* Actions */}
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-1">
-                     <button onClick={() => setViewHistoryId(asset.id)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded" title="查看历史">
-                        <History size={14} />
+                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity -mr-1" onClick={e => e.stopPropagation()}>
+                    <button onClick={() => setViewHistoryId(asset.id)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded transition-colors" title="历史">
+                        <History size={16} />
                     </button>
-                    <button onClick={() => openEditModal(asset)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded" title="编辑">
-                        <Edit2 size={14} />
+                    <button onClick={() => openEditModal(asset)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded transition-colors" title="编辑">
+                        <Edit2 size={16} />
                     </button>
-                    <button onClick={() => handleDelete(asset.id, asset.name)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-50 rounded" title="删除">
-                        <Trash2 size={14} />
+                    <button onClick={() => handleDelete(asset.id, asset.name)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-100 rounded transition-colors" title="删除">
+                        <Trash2 size={16} />
                     </button>
                 </div>
             </div>
-        </div>
 
-        {/* Footer */}
-        <div 
-          className="pt-3 border-t border-slate-50 flex justify-between items-end mt-2 cursor-pointer"
-          onClick={() => setViewHistoryId(asset.id)}
-        >
-             <div className="flex flex-col">
-                <span className="text-[10px] text-slate-400">持仓市值</span>
-                <span className="text-sm font-bold text-slate-700">¥{status.marketValue.toLocaleString()}</span>
-             </div>
-             
-             <div className="flex flex-col text-right">
-                <span className="text-[10px] text-slate-400">累计盈亏</span>
-                <span className={`text-sm font-bold ${trendColor}`}>
-                    {isProfitable ? '+' : ''}{Math.abs(profit).toLocaleString()}
-                </span>
-             </div>
+            {/* Metrics */}
+            <div>
+                 <div className="text-[11px] font-medium text-slate-400 mb-0.5 uppercase tracking-wider flex items-center gap-2">
+                    {isHeld 
+                        ? '当前市值' 
+                        : (status ? `清仓市值 (${status.date})` : '暂无持仓')
+                    }
+                    {!isHeld && !status && <span className="px-1.5 py-0.5 bg-slate-100 text-slate-400 rounded text-[10px]">New</span>}
+                 </div>
+                 
+                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <div className={`text-2xl font-bold font-mono tracking-tight ${isHeld ? 'text-slate-900' : 'text-slate-500'}`}>
+                        ¥{marketValue.toLocaleString()}
+                    </div>
+                    
+                    {/* Profitability Indicators - Show even if cleared, as requested */}
+                    {status && status.totalCost > 0 && (
+                        <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-sm font-bold ${trendBg} ${trendColor}`}>
+                            <span>{trendSign}{Math.abs(profit).toLocaleString()}</span>
+                            <span className="opacity-80 text-xs">| {trendSign}{roi.toFixed(2)}%</span>
+                        </div>
+                    )}
+                 </div>
+            </div>
         </div>
+        
+        {/* Footer for Held Assets */}
+        {isHeld && status && (
+             <div className="px-5 py-3 border-t border-slate-50 bg-slate-50/30 rounded-b-xl flex justify-between items-center text-xs text-slate-500">
+                <div>持有: {status.quantity.toLocaleString()}</div>
+                <div>成本: ¥{status.totalCost.toLocaleString()}</div>
+             </div>
+        )}
       </div>
     );
   };
@@ -391,7 +411,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
           >
             {isClearedOpen ? <ChevronDown size={18} className="text-slate-400" /> : <ChevronRight size={18} className="text-slate-400" />}
             <h3 className="font-bold text-slate-500 group-hover:text-slate-700 transition-colors">
-              {selectedDate === 'latest' ? '已清空 / 历史持有' : `${selectedDate} 时未持有`}
+              {selectedDate === 'latest' ? '已清空 / 历史持有 / 观察中' : `${selectedDate} 时未持有`}
             </h3>
             <span className="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full">{clearedAssets.length}</span>
           </button>

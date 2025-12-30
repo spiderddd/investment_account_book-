@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Plus, Calendar, Trash2, Coins, Landmark, Briefcase, TrendingUp, DollarSign, Save, X, Activity, Search, FileText, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Calendar, Trash2, Coins, Landmark, Briefcase, TrendingUp, DollarSign, Save, X, Activity, Search, FileText, ChevronDown, ChevronUp, ArrowRight } from 'lucide-react';
 import { SnapshotItem, StrategyVersion, AssetRecord, AssetCategory, Asset } from '../types';
 import { generateId, StorageService } from '../services/storageService';
 
@@ -144,9 +144,21 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     setViewMode('entry');
   };
 
-  const updateRow = (index: number, field: keyof AssetRowInput, value: string) => {
+  const updateRow = (index: number, field: 'price' | 'quantityChange' | 'costChange', value: string) => {
     const newRows = [...rows];
-    newRows[index] = { ...newRows[index], [field]: value };
+    const row = newRows[index];
+    row[field] = value;
+
+    // --- Intelligent Sync for Wealth/Fixed ---
+    // If user inputs "Cost Change" (Deposit Principal), we assume "Quantity Change" (Balance) increases by same amount
+    // unless Quantity is already manually edited.
+    if ((row.category === 'fixed' || row.category === 'wealth') && field === 'costChange') {
+        // Only auto-sync if quantity hasn't been touched yet or matches previous principal input
+        // Simple logic: overwrite quantity change to match principal change for convenience
+        // User can manually correct Quantity afterwards if it differs (e.g. fees)
+        row.quantityChange = value;
+    }
+
     setRows(newRows);
   };
 
@@ -160,6 +172,7 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     
     // Check previous value
     const prevAsset = previousSnapshot?.assets.find(a => a.assetId === asset.id);
+    const isCashLike = asset.type === 'fixed' || asset.type === 'wealth';
     
     setRows([
       ...rows,
@@ -169,7 +182,7 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
         strategyId: undefined,
         name: asset.name,
         category: asset.type,
-        price: prevAsset ? prevAsset.unitPrice.toString() : (asset.type === 'fixed' || asset.type === 'wealth' ? '1' : ''),
+        price: prevAsset ? prevAsset.unitPrice.toString() : (isCashLike ? '1' : ''),
         quantityChange: '',
         costChange: '',
         prevQuantity: prevAsset ? prevAsset.quantity : 0,
@@ -189,8 +202,8 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
   const handleSubmit = () => {
     if (onSave) {
         const finalAssets: AssetRecord[] = rows.map(r => {
-        // Wealth and Fixed items often have unit price of 1
-        const price = parseFloat(r.price) || (r.category === 'fixed' || r.category === 'wealth' ? 1 : 0);
+        // Wealth and Fixed items ALWAYS have unit price of 1 for simplified bookkeeping
+        const price = (r.category === 'fixed' || r.category === 'wealth') ? 1 : (parseFloat(r.price) || 0);
         const qChange = parseFloat(r.quantityChange) || 0;
         const cChange = parseFloat(r.costChange) || 0;
         
@@ -371,10 +384,18 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((row, idx) => {
-                  const p = parseFloat(row.price) || (row.category === 'fixed' || row.category === 'wealth' ? 1 : 0);
+                  const isCashLike = row.category === 'fixed' || row.category === 'wealth';
+                  const p = parseFloat(row.price) || (isCashLike ? 1 : 0);
                   const qChange = parseFloat(row.quantityChange) || 0;
+                  const cChange = parseFloat(row.costChange) || 0;
                   const currentQ = row.prevQuantity + qChange;
                   const currentVal = currentQ * p;
+                  
+                  // Implied Profit Calculation for this specific row action
+                  // For Wealth/Fixed: Profit = (Added Quantity * 1) - Added Principal
+                  // For Security: Profit can't be easily calc'd just from flow, need valuation change.
+                  // But for the user request "Bookkeeping In/Out", showing implied interest for Wealth is helpful.
+                  const impliedProfit = isCashLike ? (qChange - cChange) : 0;
 
                   return (
                     <tr key={row.recordId} className="hover:bg-slate-50 group">
@@ -392,17 +413,23 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                       <td className="p-4">
                         <input 
                            type="number" step="0.0001" placeholder="0.00"
-                           className="w-full text-right px-2 py-1 border border-slate-200 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                           value={row.price} onChange={e => updateRow(idx, 'price', e.target.value)}
-                           disabled={row.category === 'fixed' || row.category === 'wealth'} // Wealth price usually 1
+                           className={`w-full text-right px-2 py-1 border rounded focus:ring-2 focus:ring-blue-500 outline-none ${isCashLike ? 'bg-slate-100 text-slate-400 border-transparent cursor-not-allowed' : 'border-slate-200'}`}
+                           value={isCashLike ? '1.00' : row.price} 
+                           onChange={e => !isCashLike && updateRow(idx, 'price', e.target.value)}
+                           disabled={isCashLike} 
                         />
                       </td>
-                      <td className="p-4 bg-blue-50/30">
+                      <td className="p-4 bg-blue-50/30 relative">
                         <input 
                            type="number" step="0.0001" placeholder="0"
                            className="w-full text-right px-2 py-1 border border-blue-200 rounded focus:ring-2 focus:ring-blue-500 outline-none text-blue-700 font-medium"
                            value={row.quantityChange} onChange={e => updateRow(idx, 'quantityChange', e.target.value)}
                         />
+                         {isCashLike && Math.abs(impliedProfit) > 0.01 && (
+                            <div className={`text-[10px] text-right mt-1 font-medium ${impliedProfit > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                               {impliedProfit > 0 ? '利息/收益 +' : '费用 -'}{Math.abs(impliedProfit).toLocaleString()}
+                            </div>
+                        )}
                       </td>
                       {/* Changed input text color to Red for Principal/Cost */}
                       <td className="p-4 bg-rose-50/30">
@@ -577,7 +604,7 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
               )}
 
             </div>
-          )}
+          )})}
         )}
       </div>
     </div>

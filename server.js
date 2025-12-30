@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS positions (
     id TEXT PRIMARY KEY,
     snapshot_id TEXT NOT NULL,
     asset_id TEXT NOT NULL,
+    strategy_id TEXT, -- Added: Critical for strategy view consistency
     quantity REAL NOT NULL,
     price REAL NOT NULL,
     market_value REAL NOT NULL,
@@ -214,6 +215,7 @@ app.get('/api/snapshots', (req, res) => {
                 json_object(
                     'id', p.id,
                     'assetId', p.asset_id,
+                    'strategyId', p.strategy_id, -- Critical fix
                     'name', a.name,
                     'category', a.type,
                     'unitPrice', p.price,
@@ -272,8 +274,8 @@ app.post('/api/snapshots', (req, res) => {
 
             const stmt = db.prepare(`
                 INSERT INTO positions 
-                (id, snapshot_id, asset_id, quantity, price, market_value, total_cost, added_quantity, added_principal) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, snapshot_id, asset_id, strategy_id, quantity, price, market_value, total_cost, added_quantity, added_principal) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             
             assets.forEach(a => {
@@ -282,6 +284,7 @@ app.post('/api/snapshots', (req, res) => {
                     uuidv4(), 
                     snapshotId, 
                     a.assetId || a.id, // In unified frontend model, id might be assetId if selecting from existing
+                    a.strategyId || null, // Ensure strategyId is saved
                     a.quantity, 
                     a.unitPrice, 
                     a.marketValue, 
