@@ -21,7 +21,8 @@
     "recharts": "^3.6.0",
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",
-    "react-markdown": "^10.1.0"
+    "react-markdown": "^10.1.0",
+    "fs": "^0.0.1-security"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

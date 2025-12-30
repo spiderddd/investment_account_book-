@@ -14,6 +14,7 @@ import sqlite3 from 'sqlite3';
 import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 // --- Fix for __dirname in ES Modules ---
@@ -22,10 +23,24 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const DB_PATH = path.join(__dirname, 'invest_track.db');
+
+// --- Path Configuration ---
+// Ensure data directory exists (better for Docker volume mounting)
+const DATA_DIR = path.join(__dirname, 'data');
+if (!fs.existsSync(DATA_DIR)){
+    fs.mkdirSync(DATA_DIR);
+}
+const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'invest_track.db');
 
 app.use(cors());
 app.use(express.json());
+
+// --- Static Files Serving (For Docker/Production) ---
+// Serve the static files from the React app build directory
+const distPath = path.join(__dirname, 'dist');
+if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+}
 
 // --- Database Initialization ---
 // sqlite3 needs explicit verbose call when imported this way
@@ -338,6 +353,15 @@ app.post('/api/snapshots', (req, res) => {
     });
 });
 
+// --- Catch-All for Frontend Routing (SPA) ---
+// This must be the last route.
+if (fs.existsSync(distPath)) {
+    app.get('*', (req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+    });
+}
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Database stored at: ${DB_PATH}`);
 });
