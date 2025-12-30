@@ -128,26 +128,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
     const asset = assets.find(a => a.id === assetId);
     if (asset) {
       setItemName(asset.name);
-      
-      // Smart Auto-fill Module based on type
-      if (!itemModule) {
-          switch(asset.type) {
-              case 'security': 
-              case 'fund':
-                  setItemModule('权益持仓'); 
-                  break;
-              case 'gold':
-              case 'crypto':
-                  setItemModule('另类/避险');
-                  break;
-              case 'fixed': 
-              case 'wealth':
-                  setItemModule('稳健理财');
-                  break;
-              default:
-                  setItemModule('其他资产');
-          }
-      }
+      // Removed auto-fill logic for module to allow custom user definition (e.g. "Survival Layer")
     }
   };
 
@@ -507,7 +488,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
                <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">模块/策略类别</label>
                 <input 
-                  type="text" required placeholder="如：权益持仓 / 稳健理财"
+                  type="text" required placeholder="如：生存层 / 结构层 / 核心持仓"
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                   value={itemModule} onChange={e => setItemModule(e.target.value)}
                 />
