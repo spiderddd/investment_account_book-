@@ -4,17 +4,21 @@
  * 部署说明:
  * 1. 在 NAS 上安装 Node.js
  * 2. 创建目录并将此文件放入
- * 3. 运行 `npm init -y`
+ * 3. 运行 `npm init -y` (确保 package.json 中有 "type": "module")
  * 4. 运行 `npm install express sqlite3 cors body-parser uuid`
  * 5. 启动 `node server.js`
  */
 
-const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
-const cors = require('cors');
-const { v4: uuidv4 } = require('uuid');
-const path = require('path');
-const fs = require('fs');
+import express from 'express';
+import sqlite3 from 'sqlite3';
+import cors from 'cors';
+import { v4 as uuidv4 } from 'uuid';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// --- Fix for __dirname in ES Modules ---
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -24,7 +28,9 @@ app.use(cors());
 app.use(express.json());
 
 // --- Database Initialization ---
-const db = new sqlite3.Database(DB_PATH);
+// sqlite3 needs explicit verbose call when imported this way
+const sqlite3Verbose = sqlite3.verbose();
+const db = new sqlite3Verbose.Database(DB_PATH);
 
 const initSql = `
 CREATE TABLE IF NOT EXISTS assets (
@@ -67,7 +73,7 @@ CREATE TABLE IF NOT EXISTS positions (
     id TEXT PRIMARY KEY,
     snapshot_id TEXT NOT NULL,
     asset_id TEXT NOT NULL,
-    strategy_id TEXT, -- Added: Critical for strategy view consistency
+    strategy_id TEXT,
     quantity REAL NOT NULL,
     price REAL NOT NULL,
     market_value REAL NOT NULL,
@@ -121,8 +127,6 @@ app.put('/api/assets/:id', (req, res) => {
 
 app.delete('/api/assets/:id', (req, res) => {
     const { id } = req.params;
-    // Note: If foreign keys are enforced, this might fail if used in strategies/positions.
-    // Ideally we should check usage first, but for MVP we allow delete (or it will error if constraints active).
     db.run("DELETE FROM assets WHERE id = ?", [id], function(err) {
         if (err) return res.status(500).json({error: err.message});
         res.json({ success: true, id });
@@ -141,7 +145,7 @@ app.get('/api/strategies', (req, res) => {
                     'targetRatio', t.target_ratio,
                     'color', t.color,
                     'targetName', a.name,
-                    'module', a.type -- Using type as module for simplicity or join another way
+                    'module', a.type 
                 )
             ) as items 
         FROM strategy_versions v
@@ -153,18 +157,14 @@ app.get('/api/strategies', (req, res) => {
     
     db.all(sql, [], (err, rows) => {
         if (err) return res.status(500).json({error: err.message});
-        // Parse the JSON string from sqlite group_concat hack or handle strictly
-        // SQLite json_group_array returns a string
         const result = rows.map(row => ({
             ...row,
             items: JSON.parse(row.items).filter(i => i.id !== null).map(i => ({
-                id: i.id, // target id
-                // frontend expects specific structure
+                id: i.id, 
                 targetName: i.targetName,
                 targetWeight: i.targetRatio,
                 color: i.color,
                 module: i.module,
-                // We keep reference to real assetId
                 assetId: i.assetId 
             }))
         }));
@@ -173,8 +173,6 @@ app.get('/api/strategies', (req, res) => {
 });
 
 app.post('/api/strategies', (req, res) => {
-    // This is a complex transaction, simplified here.
-    // Expects full strategy object.
     const { name, description, startDate, items } = req.body;
     const id = uuidv4();
     const now = Date.now();
@@ -182,18 +180,12 @@ app.post('/api/strategies', (req, res) => {
     db.serialize(() => {
         db.run("BEGIN TRANSACTION");
         
-        // Archive others if this is active? (Optional logic)
-        
         db.run("INSERT INTO strategy_versions (id, name, description, start_date, created_at) VALUES (?, ?, ?, ?, ?)",
             [id, name, description, startDate, now]);
             
         if (items && items.length > 0) {
             const stmt = db.prepare("INSERT INTO strategy_targets (id, version_id, asset_id, target_ratio, color) VALUES (?, ?, ?, ?, ?)");
             items.forEach(item => {
-                // Frontend might send 'assetId' or we need to look it up/create it.
-                // For this MVP, we assume frontend ensures Assets exist or sends an assetId.
-                // If item is new, we might need to create asset first. 
-                // Let's assume assetId is provided.
                 stmt.run(uuidv4(), id, item.assetId, item.targetWeight, item.color);
             });
             stmt.finalize();
@@ -215,7 +207,7 @@ app.get('/api/snapshots', (req, res) => {
                 json_object(
                     'id', p.id,
                     'assetId', p.asset_id,
-                    'strategyId', p.strategy_id, -- Critical fix
+                    'strategyId', p.strategy_id,
                     'name', a.name,
                     'category', a.type,
                     'unitPrice', p.price,
@@ -244,16 +236,14 @@ app.get('/api/snapshots', (req, res) => {
 });
 
 app.post('/api/snapshots', (req, res) => {
-    const { date, assets, note } = req.body; // assets is array of position objects
+    const { date, assets, note } = req.body; 
     
-    // Check if exists
     db.get("SELECT id FROM snapshots WHERE date = ?", [date], (err, row) => {
         if (err) return res.status(500).json({error: err.message});
         
         const snapshotId = row ? row.id : uuidv4();
         const now = Date.now();
         
-        // Calculate totals
         const totalValue = assets.reduce((sum, a) => sum + a.marketValue, 0);
         const totalInvested = assets.reduce((sum, a) => sum + a.totalCost, 0);
 
@@ -261,13 +251,10 @@ app.post('/api/snapshots', (req, res) => {
             db.run("BEGIN TRANSACTION");
             
             if (row) {
-                // Update existing
                 db.run("UPDATE snapshots SET total_value=?, total_invested=?, note=?, updated_at=? WHERE id=?", 
                     [totalValue, totalInvested, note, now, snapshotId]);
-                // Clear old positions to re-insert (simplest strategy for edit)
                 db.run("DELETE FROM positions WHERE snapshot_id=?", [snapshotId]);
             } else {
-                // Insert new
                 db.run("INSERT INTO snapshots (id, date, total_value, total_invested, note, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
                     [snapshotId, date, totalValue, totalInvested, note, now]);
             }
@@ -279,12 +266,11 @@ app.post('/api/snapshots', (req, res) => {
             `);
             
             assets.forEach(a => {
-                // Ensure assetId exists
                 stmt.run(
                     uuidv4(), 
                     snapshotId, 
-                    a.assetId || a.id, // In unified frontend model, id might be assetId if selecting from existing
-                    a.strategyId || null, // Ensure strategyId is saved
+                    a.assetId || a.id, 
+                    a.strategyId || null, 
                     a.quantity, 
                     a.unitPrice, 
                     a.marketValue, 
