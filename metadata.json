@@ -1,0 +1,5 @@
+{
+  "name": "InvestTrack",
+  "description": "一个基于快照方法论和本地存储的纯前端个人投资策略追踪器。",
+  "requestFramePermissions": []
+}
