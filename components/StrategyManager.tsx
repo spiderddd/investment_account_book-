@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Plus, Trash2, Edit2, AlertCircle, Check, History, Copy, Calendar, FileText, ChevronRight, BookOpen, Save, X } from 'lucide-react';
-import { StrategyVersion, StrategyTarget } from '../types';
+import { Plus, Trash2, Edit2, AlertCircle, Check, History, Copy, Calendar, FileText, ChevronRight, BookOpen, Save, X, Search } from 'lucide-react';
+import { StrategyVersion, StrategyTarget, Asset } from '../types';
 import { generateId, StorageService } from '../services/storageService';
 
 interface StrategyManagerProps {
-  strategies: StrategyVersion[]; // Renamed prop internally to 'versions' but kept for App compatibility
+  strategies: StrategyVersion[]; 
+  assets: Asset[]; // Added assets prop
   onUpdate: (versions: StrategyVersion[]) => void;
 }
 
@@ -16,7 +17,7 @@ const PRESET_COLORS = [
   '#f97316', '#14b8a6', '#84cc16', '#64748b',
 ];
 
-const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions, onUpdate }) => {
+const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions, assets, onUpdate }) => {
   // State
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
   const [isEditingMeta, setIsEditingMeta] = useState(false);
@@ -28,8 +29,9 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
   const [metaDate, setMetaDate] = useState('');
 
   // Item Form State
+  const [itemAssetId, setItemAssetId] = useState('');
   const [itemModule, setItemModule] = useState('');
-  const [itemName, setItemName] = useState('');
+  const [itemName, setItemName] = useState(''); // This will be auto-filled or read-only mostly
   const [itemWeight, setItemWeight] = useState('');
   const [itemColor, setItemColor] = useState(PRESET_COLORS[0]);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -105,12 +107,14 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
   const openItemForm = (item?: StrategyTarget) => {
     if (item) {
       setEditingItemId(item.id);
+      setItemAssetId(item.assetId);
       setItemModule(item.module);
       setItemName(item.targetName);
       setItemWeight(item.targetWeight.toString());
       setItemColor(item.color);
     } else {
       setEditingItemId(null);
+      setItemAssetId('');
       setItemModule('');
       setItemName('');
       setItemWeight('');
@@ -119,23 +123,50 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
     setIsAddingItem(true);
   };
 
+  const handleAssetSelect = (assetId: string) => {
+    setItemAssetId(assetId);
+    const asset = assets.find(a => a.id === assetId);
+    if (asset) {
+      setItemName(asset.name);
+      
+      // Smart Auto-fill Module based on type
+      if (!itemModule) {
+          switch(asset.type) {
+              case 'security': 
+              case 'fund':
+                  setItemModule('权益持仓'); 
+                  break;
+              case 'gold':
+              case 'crypto':
+                  setItemModule('另类/避险');
+                  break;
+              case 'fixed': 
+              case 'wealth':
+                  setItemModule('稳健理财');
+                  break;
+              default:
+                  setItemModule('其他资产');
+          }
+      }
+    }
+  };
+
   const handleSaveItem = (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentVersion) return;
+    if (!itemAssetId) {
+        alert("请选择一个资产标的");
+        return;
+    }
 
     const weightNum = parseFloat(itemWeight);
     if (isNaN(weightNum) || weightNum <= 0) return;
 
-    // Retrieve existing assetId if editing, otherwise generate a new one
-    const existingItem = editingItemId 
-      ? currentVersion.items.find(i => i.id === editingItemId)
-      : undefined;
-
     const newItem: StrategyTarget = {
-      id: editingItemId || generateId(), // Keep ID if editing to preserve history linkage
-      assetId: existingItem ? existingItem.assetId : generateId(),
+      id: editingItemId || generateId(), 
+      assetId: itemAssetId, // Link to global asset
       module: itemModule,
-      targetName: itemName,
+      targetName: itemName, // Cache name
       targetWeight: weightNum,
       color: itemColor
     };
@@ -144,6 +175,11 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
     if (editingItemId) {
       newItems = newItems.map(i => i.id === editingItemId ? newItem : i);
     } else {
+      // Check for duplicates
+      if (newItems.some(i => i.assetId === itemAssetId)) {
+          alert("该资产已存在于策略中");
+          return;
+      }
       newItems.push(newItem);
     }
 
@@ -205,7 +241,6 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
           </div>
           
           <div className="space-y-3">
-            {/* Added safety check (|| '') for startDate to prevent crashes if data is malformed */}
             {versions.sort((a,b) => (b.startDate || '').localeCompare(a.startDate || '')).map(v => (
               <div 
                 key={v.id}
@@ -278,7 +313,6 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
                        {currentVersion.description ? (
                          <ReactMarkdown 
                             components={{
-                              // Use explicit children passing instead of spread props for safety
                               h1: ({children}) => <h1 className="text-2xl font-bold text-slate-900 mb-4 pb-2 border-b border-slate-100">{children}</h1>,
                               h2: ({children}) => <h2 className="text-xl font-bold text-slate-800 mt-6 mb-3">{children}</h2>,
                               h3: ({children}) => <h3 className="text-lg font-bold text-slate-700 mt-4 mb-2">{children}</h3>,
@@ -440,27 +474,46 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
       {isAddingItem && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95">
-             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center">
+             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <h3 className="text-lg font-bold text-slate-800">{editingItemId ? '编辑配置' : '添加配置'}</h3>
               <button onClick={() => setIsAddingItem(false)} className="text-slate-400 hover:text-slate-600">×</button>
             </div>
             <form onSubmit={handleSaveItem} className="p-6 space-y-4">
+               
+               {/* New Asset Selector */}
                <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">模块类别</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">选择资产标的</label>
+                <div className="relative">
+                    <select 
+                        required
+                        className="w-full appearance-none px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                        value={itemAssetId}
+                        onChange={e => handleAssetSelect(e.target.value)}
+                    >
+                        <option value="">-- 请选择资产 --</option>
+                        {assets.map(a => (
+                            <option key={a.id} value={a.id}>{a.name} ({a.type})</option>
+                        ))}
+                    </select>
+                    <ChevronRight className="absolute right-3 top-2.5 text-slate-400 rotate-90 pointer-events-none" size={16} />
+                </div>
+                {assets.length === 0 && (
+                    <div className="text-xs text-red-500 mt-1">
+                        资产库为空，请先在“资产库”页面添加资产。
+                    </div>
+                )}
+               </div>
+
+               <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">模块/策略类别</label>
                 <input 
-                  type="text" required placeholder="如：核心持仓 / 卫星持仓 / 防御资产"
+                  type="text" required placeholder="如：权益持仓 / 稳健理财"
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                   value={itemModule} onChange={e => setItemModule(e.target.value)}
                 />
+                <p className="text-[10px] text-slate-400 mt-1">用于将不同资产进行分组统计</p>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">标的名称</label>
-                <input 
-                  type="text" required placeholder="如：沪深300 ETF"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  value={itemName} onChange={e => setItemName(e.target.value)}
-                />
-              </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">目标权重 (%)</label>
                 <input 
@@ -469,6 +522,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
                   value={itemWeight} onChange={e => setItemWeight(e.target.value)}
                 />
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">显示颜色</label>
                 <div className="grid grid-cols-6 gap-2">
@@ -484,6 +538,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
                   ))}
                 </div>
               </div>
+              
               <div className="pt-4 flex gap-3">
                 <button type="button" onClick={() => setIsAddingItem(false)} className="flex-1 px-4 py-2 border rounded-lg hover:bg-slate-50">取消</button>
                 <button type="submit" className="flex-1 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800">保存</button>

@@ -188,6 +188,7 @@ const App: React.FC = () => {
         {activeView === 'strategy' && (
           <StrategyManager 
             strategies={strategyVersions} 
+            assets={assets}
             onUpdate={handleUpdateStrategies} 
           />
         )}
