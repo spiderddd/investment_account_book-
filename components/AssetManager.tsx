@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  Search, Plus, Trash2, Edit2, Coins, Briefcase, Landmark, TrendingUp, Wallet, X, Save, AlertCircle, ChevronDown, ChevronRight, Clock, History, BarChart2 
+  Search, Plus, Trash2, Edit2, Coins, Briefcase, Landmark, TrendingUp, Wallet, X, Save, AlertCircle, ChevronDown, ChevronRight, Clock, History, BarChart2, Eye, EyeOff 
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, Legend 
@@ -37,6 +37,7 @@ interface AssetPerformance {
 
 export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, onUpdate, onCreate, onEdit, onDelete }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [showHeldOnly, setShowHeldOnly] = useState(false);
   
   // Date Selection State
   const [selectedDate, setSelectedDate] = useState<string>('latest');
@@ -126,7 +127,13 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
                             (asset.ticker && asset.ticker.toLowerCase().includes(searchTerm.toLowerCase()));
       if (!matchesSearch) return;
 
-      // 2. Add to group
+      // 2. Filter by Holding Status
+      // If showHeldOnly is true, we only show assets present in the performance map (quantity > 0)
+      if (showHeldOnly && !assetPerformanceMap.has(asset.id)) {
+        return;
+      }
+
+      // 3. Add to group
       const list = groups.get(asset.type);
       if (list) list.push(asset);
     });
@@ -141,7 +148,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
     });
 
     return groups;
-  }, [assets, searchTerm, assetPerformanceMap]);
+  }, [assets, searchTerm, assetPerformanceMap, showHeldOnly]);
 
   // --- Data Logic: Specific Asset History (For History Modal) ---
   const selectedAssetHistory = useMemo(() => {
@@ -220,40 +227,40 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
     return (
       <div 
         key={asset.id} 
-        className={`bg-white rounded-lg p-3 border shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden ${isHeld ? 'border-slate-200' : 'border-slate-100 opacity-70 hover:opacity-100 bg-slate-50'}`}
+        className={`bg-white rounded-lg p-5 border shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden ${isHeld ? 'border-slate-200' : 'border-slate-100 opacity-70 hover:opacity-100 bg-slate-50'}`}
         onClick={() => setViewHistoryId(asset.id)}
       >
-        {isHeld && <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500 rounded-l-lg"></div>}
+        {isHeld && <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-blue-500 rounded-l-lg"></div>}
         
-        <div className="flex justify-between items-start mb-2 pl-2">
+        <div className="flex justify-between items-start mb-4">
             <div>
-                <h4 className={`font-bold text-sm ${isHeld ? 'text-slate-800' : 'text-slate-500'}`}>{asset.name}</h4>
-                {asset.ticker && <div className="text-[10px] text-slate-400 font-mono mt-0.5">{asset.ticker}</div>}
+                <h4 className={`font-bold text-base ${isHeld ? 'text-slate-800' : 'text-slate-500'}`}>{asset.name}</h4>
+                {asset.ticker && <div className="text-xs text-slate-400 font-mono mt-0.5">{asset.ticker}</div>}
             </div>
             
-             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity absolute right-2 top-2 bg-white/90 rounded shadow-sm p-1">
-                <button onClick={(e) => { e.stopPropagation(); openEditModal(asset); }} className="p-1 hover:text-blue-600"><Edit2 size={12} /></button>
-                <button onClick={(e) => { e.stopPropagation(); handleDelete(asset.id, asset.name); }} className="p-1 hover:text-red-600"><Trash2 size={12} /></button>
+             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity absolute right-3 top-3 bg-white/90 rounded shadow-sm p-1">
+                <button onClick={(e) => { e.stopPropagation(); openEditModal(asset); }} className="p-1.5 hover:text-blue-600"><Edit2 size={14} /></button>
+                <button onClick={(e) => { e.stopPropagation(); handleDelete(asset.id, asset.name); }} className="p-1.5 hover:text-red-600"><Trash2 size={14} /></button>
             </div>
         </div>
 
-        <div className="pl-2">
+        <div>
             {status ? (
                 <>
-                    <div className="flex items-baseline justify-between mb-1">
-                        <span className="text-xs text-slate-400">市值</span>
-                        <span className={`font-bold font-mono text-sm ${isHeld ? 'text-slate-900' : 'text-slate-500'}`}>¥{marketValue.toLocaleString()}</span>
+                    <div className="flex items-baseline justify-between mb-2">
+                        <span className="text-xs text-slate-400 uppercase tracking-wide">当前市值</span>
+                        <span className={`font-bold font-mono text-lg ${isHeld ? 'text-slate-900' : 'text-slate-500'}`}>¥{marketValue.toLocaleString()}</span>
                     </div>
                     {totalCost > 0 && (
-                        <div className="flex items-baseline justify-between text-[10px]">
-                            <span className="text-slate-400">浮盈</span>
+                        <div className="flex items-baseline justify-between text-xs">
+                            <span className="text-slate-400">浮动盈亏</span>
                             <span className={`font-medium ${trendColor}`}>{profit > 0 ? '+' : ''}{profit.toLocaleString()}</span>
                         </div>
                     )}
-                     {!isHeld && <div className="text-[9px] text-slate-400 text-right mt-1">已清仓 / 历史数据</div>}
+                     {!isHeld && <div className="text-[10px] text-slate-400 text-right mt-2 border-t border-slate-100 pt-1">已清仓 / 历史数据</div>}
                 </>
             ) : (
-                <div className="text-[10px] text-slate-400 italic text-center py-2">暂无持仓记录</div>
+                <div className="text-xs text-slate-400 italic text-center py-4 bg-slate-50 rounded">暂无持仓记录</div>
             )}
         </div>
       </div>
@@ -268,7 +275,21 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
           <h2 className="text-2xl font-bold text-slate-800">资产库看板</h2>
           <p className="text-slate-500 text-sm">全量资产管理，按类别分组。</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+             {/* Filter Toggle */}
+             <button 
+                onClick={() => setShowHeldOnly(!showHeldOnly)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-colors border shadow-sm ${
+                    showHeldOnly 
+                    ? 'bg-blue-50 text-blue-700 border-blue-200' 
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+                title={showHeldOnly ? "点击显示所有资产" : "点击仅显示当前持仓"}
+            >
+                {showHeldOnly ? <Eye size={16} /> : <EyeOff size={16} />}
+                <span className="hidden sm:inline">{showHeldOnly ? '仅看持仓' : '查看全部'}</span>
+            </button>
+
             <div className="relative">
                 <select 
                     className="appearance-none bg-white border border-slate-200 pl-9 pr-8 py-2 rounded-lg text-sm font-medium text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm cursor-pointer"
@@ -327,8 +348,8 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
                          </span>
                     </div>
 
-                    {/* Responsive Grid */}
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                    {/* Responsive Grid - Enlarged Cards (max 3 cols) */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         {items.map(asset => renderAssetCard(asset))}
                     </div>
                 </div>
@@ -339,7 +360,17 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
         {assets.length > 0 && Array.from(columns.values()).every(list => list.length === 0) && (
             <div className="text-center py-20 text-slate-400">
                 <Search size={48} className="mx-auto mb-4 opacity-20" />
-                <p>未找到匹配的资产</p>
+                <p>
+                    {showHeldOnly ? '当前视图下无持仓资产' : '未找到匹配的资产'}
+                </p>
+                {showHeldOnly && (
+                    <button 
+                        onClick={() => setShowHeldOnly(false)}
+                        className="mt-2 text-blue-600 hover:underline text-sm"
+                    >
+                        切换到“查看全部”
+                    </button>
+                )}
             </div>
         )}
 
