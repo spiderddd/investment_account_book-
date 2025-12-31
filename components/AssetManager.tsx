@@ -213,55 +213,96 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
   // --- Renderers ---
 
   const renderAssetCard = (asset: Asset) => {
+    const meta = getCategoryMeta(asset.type);
+    const Icon = meta.icon;
     const status = assetPerformanceMap.get(asset.id);
     const isHeld = !!status && !status.isHistorical; 
     
     const marketValue = status ? status.marketValue : 0;
     const totalCost = status ? status.totalCost : 0;
     const profit = marketValue - totalCost;
+    const roi = totalCost > 0 ? (profit / totalCost) * 100 : 0;
     const isProfitable = profit >= 0;
 
     const trendColor = isProfitable ? 'text-rose-600' : 'text-emerald-600';
+    const trendBg = isProfitable ? 'bg-rose-50' : 'bg-emerald-50';
+    const trendSign = isProfitable ? '+' : '';
 
     return (
       <div 
         key={asset.id} 
-        className={`bg-white rounded-lg p-3 border shadow-sm hover:shadow-md transition-all cursor-pointer group relative overflow-hidden ${isHeld ? 'border-slate-200' : 'border-slate-100 opacity-70 hover:opacity-100 bg-slate-50'}`}
+        className={`bg-white rounded-xl border transition-all duration-200 group relative flex flex-col justify-between
+          ${isHeld 
+            ? 'border-slate-200 shadow-sm hover:shadow-md' 
+            : 'border-slate-100 bg-slate-50 opacity-60 hover:opacity-100 hover:shadow-sm'
+          }`}
         onClick={() => setViewHistoryId(asset.id)}
       >
-        {isHeld && <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500 rounded-l-lg"></div>}
-        
-        <div className="flex justify-between items-start mb-2 pl-2">
-            <div className="overflow-hidden">
-                <h4 className={`font-bold text-sm truncate ${isHeld ? 'text-slate-800' : 'text-slate-500'}`} title={asset.name}>{asset.name}</h4>
-                {asset.ticker && <div className="text-[10px] text-slate-400 font-mono mt-0.5 truncate">{asset.ticker}</div>}
-            </div>
-            
-             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity absolute right-2 top-2 bg-white/90 rounded shadow-sm p-1 z-10">
-                <button onClick={(e) => { e.stopPropagation(); openEditModal(asset); }} className="p-1 hover:text-blue-600"><Edit2 size={12} /></button>
-                <button onClick={(e) => { e.stopPropagation(); handleDelete(asset.id, asset.name); }} className="p-1 hover:text-red-600"><Trash2 size={12} /></button>
-            </div>
-        </div>
-
-        <div className="pl-2">
-            {status ? (
-                <>
-                    <div className="flex items-baseline justify-between mb-1">
-                        <span className="text-xs text-slate-400">市值</span>
-                        <span className={`font-bold font-mono text-sm ${isHeld ? 'text-slate-900' : 'text-slate-500'}`}>¥{marketValue.toLocaleString()}</span>
+        <div className="p-5 flex-1 cursor-pointer">
+            {/* Header: Identity */}
+            <div className="flex justify-between items-start mb-4">
+                <div className="flex items-center gap-3">
+                    <div className={`p-2.5 rounded-xl shrink-0 ${isHeld ? meta.color : 'bg-slate-200 text-slate-400 grayscale'}`}>
+                        <Icon size={22} />
                     </div>
-                    {totalCost > 0 && (
-                        <div className="flex items-baseline justify-between text-[10px]">
-                            <span className="text-slate-400">浮盈</span>
-                            <span className={`font-medium ${trendColor}`}>{profit > 0 ? '+' : ''}{profit.toLocaleString()}</span>
+                    <div className="overflow-hidden">
+                        <h3 className={`font-bold text-base leading-tight truncate ${isHeld ? 'text-slate-800' : 'text-slate-600'}`} title={asset.name}>
+                            {asset.name}
+                        </h3>
+                        <div className="flex items-center gap-2 text-xs text-slate-400 mt-1">
+                            {asset.ticker && <span className="font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">{asset.ticker}</span>}
+                            <span>{meta.label}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                {/* Actions */}
+                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity -mr-1" onClick={e => e.stopPropagation()}>
+                    <button onClick={() => setViewHistoryId(asset.id)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded transition-colors" title="历史">
+                        <History size={16} />
+                    </button>
+                    <button onClick={() => openEditModal(asset)} className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded transition-colors" title="编辑">
+                        <Edit2 size={16} />
+                    </button>
+                    <button onClick={() => handleDelete(asset.id, asset.name)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-slate-100 rounded transition-colors" title="删除">
+                        <Trash2 size={16} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Metrics */}
+            <div>
+                 <div className="text-[11px] font-medium text-slate-400 mb-0.5 uppercase tracking-wider flex items-center gap-2">
+                    {isHeld 
+                        ? '当前市值' 
+                        : (status ? `清仓市值 (${status.date})` : '暂无持仓')
+                    }
+                    {!isHeld && !status && <span className="px-1.5 py-0.5 bg-slate-100 text-slate-400 rounded text-[10px]">New</span>}
+                 </div>
+                 
+                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <div className={`text-2xl font-bold font-mono tracking-tight ${isHeld ? 'text-slate-900' : 'text-slate-500'}`}>
+                        ¥{marketValue.toLocaleString()}
+                    </div>
+                    
+                    {/* Profitability Indicators */}
+                    {status && status.totalCost > 0 && (
+                        <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md text-sm font-bold ${trendBg} ${trendColor}`}>
+                            <span>{trendSign}{Math.abs(profit).toLocaleString()}</span>
+                            <span className="opacity-80 text-xs">| {trendSign}{roi.toFixed(2)}%</span>
                         </div>
                     )}
-                     {!isHeld && <div className="text-[9px] text-slate-400 text-right mt-1">已清仓 / 历史数据</div>}
-                </>
-            ) : (
-                <div className="text-[10px] text-slate-400 italic text-center py-2">暂无持仓记录</div>
-            )}
+                 </div>
+            </div>
         </div>
+        
+        {/* Footer for Held Assets */}
+        {isHeld && status && (
+             <div className="px-5 py-3 border-t border-slate-50 bg-slate-50/30 rounded-b-xl flex justify-between items-center text-xs text-slate-500">
+                <div>持有: <span className="font-medium text-slate-700">{status.quantity.toLocaleString()}</span></div>
+                <div>成本: <span className="font-medium text-slate-700">¥{status.totalCost.toLocaleString()}</span></div>
+             </div>
+        )}
       </div>
     );
   };
@@ -326,7 +367,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
           />
       </div>
 
-      {/* Vertical Stack Layout with Responsive Grid - Removed internal scrollbar */}
+      {/* Vertical Stack Layout with Responsive Grid - Removed internal scrollbar, using window scroll */}
       <div className="space-y-6">
         {CATEGORIES.map(cat => {
             const items = columns.get(cat.value) || [];
@@ -347,8 +388,8 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
                          </span>
                     </div>
 
-                    {/* Responsive Grid - Compact Cards */}
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                    {/* Responsive Grid - Using Original Detailed Cards - Adjusted Grid for larger cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                         {items.map(asset => renderAssetCard(asset))}
                     </div>
                 </div>
