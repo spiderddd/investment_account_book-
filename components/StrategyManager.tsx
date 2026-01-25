@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Plus, Trash2, Edit2, AlertCircle, Check, History, Copy, Calendar, FileText, ChevronRight, BookOpen, Save, X, Search } from 'lucide-react';
+import { Plus, Trash2, Edit2, AlertCircle, Check, History, Copy, Calendar, FileText, ChevronRight, BookOpen, Save, X, Layers, Layout, ArrowDown } from 'lucide-react';
 import { StrategyVersion, StrategyTarget, Asset } from '../types';
 import { generateId, StorageService } from '../services/storageService';
 
@@ -15,6 +15,15 @@ const PRESET_COLORS = [
   '#3b82f6', '#10b981', '#f59e0b', '#ef4444', 
   '#8b5cf6', '#ec4899', '#06b6d4', '#6366f1', 
   '#f97316', '#14b8a6', '#84cc16', '#64748b',
+];
+
+// Presets based on the "Four-Tier Defense System"
+const MODULE_PRESETS = [
+  "第一层：秩序底线 (现金流/高股息)",
+  "中间层：能源底座 (资源/垄断)",
+  "第二层：战略资源 (稀缺/反制)",
+  "第三层：生存与军工 (科技/安全)",
+  "卫星持仓 (机动配置)"
 ];
 
 const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions, assets, onUpdate }) => {
@@ -48,6 +57,45 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
   const currentVersion = versions.find(v => v.id === activeVersionId);
   const isCurrentActive = currentVersion?.status === 'active';
 
+  // --- Grouping Logic ---
+  const groupedItems = useMemo(() => {
+    if (!currentVersion) return [];
+    
+    const groups: Record<string, { items: StrategyTarget[], totalWeight: number }> = {};
+    
+    currentVersion.items.forEach(item => {
+        const key = item.module || '未分类模块';
+        if (!groups[key]) {
+            groups[key] = { items: [], totalWeight: 0 };
+        }
+        groups[key].items.push(item);
+        groups[key].totalWeight += item.targetWeight;
+    });
+
+    // Sort items within groups by weight desc
+    Object.values(groups).forEach(g => {
+        g.items.sort((a, b) => b.targetWeight - a.targetWeight);
+    });
+
+    // Convert to array and sort groups. 
+    // If name contains "第X层", try to sort intelligently, otherwise alphabetical or by weight
+    return Object.entries(groups).map(([name, data]) => ({
+        name,
+        ...data
+    })).sort((a, b) => {
+        // Custom sort for the manifesto layers if present
+        const tierOrder = ["第一层", "中间层", "第二层", "第三层"];
+        const idxA = tierOrder.findIndex(t => a.name.includes(t));
+        const idxB = tierOrder.findIndex(t => b.name.includes(t));
+        
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+        if (idxA !== -1) return -1;
+        if (idxB !== -1) return 1;
+        
+        return b.totalWeight - a.totalWeight; // Fallback to weight desc
+    });
+  }, [currentVersion]);
+
   // --- Version Management ---
 
   const handleCreateNewVersion = () => {
@@ -59,7 +107,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
     if (base) {
       newVersion = {
         id: generateId(),
-        name: `${base.name} (2025修订)`,
+        name: `${base.name} (修订版)`,
         description: base.description, // Inherit the constitution
         startDate: new Date().toISOString().slice(0, 10),
         status: 'active',
@@ -104,7 +152,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
 
   // --- Item Management ---
 
-  const openItemForm = (item?: StrategyTarget) => {
+  const openItemForm = (item?: StrategyTarget, presetModule?: string) => {
     if (item) {
       setEditingItemId(item.id);
       setItemAssetId(item.assetId);
@@ -115,10 +163,10 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
     } else {
       setEditingItemId(null);
       setItemAssetId('');
-      setItemModule('');
+      setItemModule(presetModule || (groupedItems.length > 0 ? groupedItems[0].name : MODULE_PRESETS[0]));
       setItemName('');
       setItemWeight('');
-      setItemColor(PRESET_COLORS[0]);
+      setItemColor(PRESET_COLORS[Math.floor(Math.random() * PRESET_COLORS.length)]);
     }
     setIsAddingItem(true);
   };
@@ -128,7 +176,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
     const asset = assets.find(a => a.id === assetId);
     if (asset) {
       setItemName(asset.name);
-      // Removed auto-fill logic for module to allow custom user definition (e.g. "Survival Layer")
+      // Try to auto-guess module based on type? No, leave to user.
     }
   };
 
@@ -202,10 +250,10 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
   }
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 pb-20 items-start">
+    <div className="flex flex-col lg:flex-row gap-6 pb-20 items-start h-[calc(100vh-100px)]">
       
       {/* Left Sidebar: Version History */}
-      <div className="w-full lg:w-1/4 space-y-4">
+      <div className="w-full lg:w-1/4 space-y-4 shrink-0">
         <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
@@ -252,13 +300,13 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
         </div>
       </div>
 
-      {/* Right Main: Detail View */}
-      <div className="w-full lg:w-3/4">
+      {/* Right Main: Detail View - Scrollable */}
+      <div className="w-full lg:w-3/4 flex flex-col h-full overflow-hidden">
         {currentVersion && (
-          <div className="space-y-8">
+          <div className="flex flex-col h-full space-y-6 overflow-y-auto pr-2 pb-10 scrollbar-thin scrollbar-thumb-slate-200">
             
             {/* Header / Meta / Policy Document */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden shrink-0">
                {/* Header Bar */}
                <div className="bg-slate-50 border-b border-slate-100 px-6 py-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div>
@@ -295,7 +343,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
                          <ReactMarkdown 
                             components={{
                               h1: ({children}) => <h1 className="text-2xl font-bold text-slate-900 mb-4 pb-2 border-b border-slate-100">{children}</h1>,
-                              h2: ({children}) => <h2 className="text-xl font-bold text-slate-800 mt-6 mb-3">{children}</h2>,
+                              h2: ({children}) => <h2 className="text-xl font-bold text-slate-800 mt-6 mb-3 flex items-center gap-2"><div className="w-1.5 h-6 bg-blue-500 rounded"></div>{children}</h2>,
                               h3: ({children}) => <h3 className="text-lg font-bold text-slate-700 mt-4 mb-2">{children}</h3>,
                               ul: ({children}) => <ul className="list-disc pl-5 space-y-1 my-2 text-slate-700">{children}</ul>,
                               li: ({children}) => <li className="pl-1">{children}</li>,
@@ -362,83 +410,126 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
             </div>
 
             {/* Quantitative Allocation Section */}
-            <div className="relative">
+            <div className="relative shrink-0">
                 <div className="absolute inset-0 flex items-center" aria-hidden="true">
                   <div className="w-full border-t border-slate-200"></div>
                 </div>
                 <div className="relative flex justify-center">
-                  <span className="bg-slate-50 px-3 text-sm font-medium text-slate-500">具体的资产配置 (Quantitative)</span>
+                  <span className="bg-slate-50 px-3 text-sm font-medium text-slate-500 flex items-center gap-2">
+                    <Layout size={16} /> 资产架构 (四级防御体系)
+                  </span>
                 </div>
             </div>
 
             {/* Allocation Warning */}
             {totalWeight !== 100 && (
-              <div className={`p-4 rounded-lg flex items-center gap-3 ${totalWeight > 100 ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-amber-50 text-amber-700 border border-amber-100'}`}>
+              <div className={`p-4 rounded-lg flex items-center gap-3 shrink-0 ${totalWeight > 100 ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-amber-50 text-amber-700 border border-amber-100'}`}>
                 <AlertCircle size={20} />
                 <span className="font-bold text-sm">当前配置总比例: {totalWeight.toFixed(1)}% (建议调整至 100%)</span>
               </div>
             )}
 
-            {/* Allocation Table */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-              <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wide">目标持仓明细</h3>
-                {isCurrentActive && (
-                  <button 
-                    onClick={() => openItemForm()}
-                    className="flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-700"
-                  >
-                    <Plus size={16} />
-                    添加标的
-                  </button>
-                )}
-              </div>
-              
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-slate-100 text-xs text-slate-500 uppercase">
-                    <th className="p-4 font-semibold">模块 / 类别</th>
-                    <th className="p-4 font-semibold">具体标的</th>
-                    <th className="p-4 font-semibold">目标权重</th>
-                    <th className="p-4 font-semibold">图表颜色</th>
-                    {isCurrentActive && <th className="p-4 font-semibold text-right">操作</th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {currentVersion.items.length === 0 ? (
-                     <tr><td colSpan={5} className="p-8 text-center text-slate-400">尚未配置任何资产标的。</td></tr>
-                  ) : (
-                    currentVersion.items.map(item => (
-                      <tr key={item.id} className="hover:bg-slate-50">
-                        <td className="p-4 text-slate-600 text-sm font-medium">{item.module}</td>
-                        <td className="p-4 font-bold text-slate-800">{item.targetName}</td>
-                        <td className="p-4 text-slate-800">
-                          <span className="bg-slate-100 px-2 py-1 rounded text-sm font-mono">{item.targetWeight}%</span>
-                        </td>
-                        <td className="p-4">
-                           <div className="w-6 h-6 rounded-full border border-slate-200" style={{backgroundColor: item.color}}></div>
-                        </td>
-                        {isCurrentActive && (
-                          <td className="p-4 text-right">
-                             <div className="flex justify-end gap-2">
-                                <button onClick={() => openItemForm(item)} className="p-1.5 text-slate-400 hover:text-blue-600 border border-slate-200 bg-white rounded shadow-sm">
-                                  <Edit2 size={14} />
-                                </button>
-                                <button onClick={() => handleDeleteItem(item.id)} className="p-1.5 text-slate-400 hover:text-red-600 border border-slate-200 bg-white rounded shadow-sm">
-                                  <Trash2 size={14} />
-                                </button>
-                             </div>
-                          </td>
-                        )}
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+            {/* Grouped Allocation Cards */}
+            <div className="space-y-4">
+              {groupedItems.length === 0 ? (
+                 <div className="p-12 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
+                    <Layers size={48} className="mx-auto mb-4 opacity-20" />
+                    <p>尚未配置任何资产架构。</p>
+                    {isCurrentActive && (
+                        <button 
+                            onClick={() => openItemForm()}
+                            className="mt-4 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 font-medium transition-colors"
+                        >
+                            添加第一层防御资产
+                        </button>
+                    )}
+                 </div>
+              ) : (
+                  groupedItems.map(group => (
+                    <div key={group.name} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                        {/* Group Header */}
+                        <div className="bg-slate-50/80 px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="bg-white p-1.5 rounded border border-slate-200 text-slate-500">
+                                    <Layers size={16} />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-slate-800 text-sm">{group.name}</h3>
+                                    <div className="text-[10px] text-slate-500">
+                                        包含 {group.items.length} 个标的
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-4">
+                                <div className="flex flex-col items-end">
+                                    <span className="text-xs text-slate-400 uppercase">层级总仓位</span>
+                                    <span className="font-bold text-blue-700 text-lg">{group.totalWeight.toFixed(1)}%</span>
+                                </div>
+                                {isCurrentActive && (
+                                    <button 
+                                        onClick={() => openItemForm(undefined, group.name)}
+                                        className="p-2 hover:bg-slate-200 rounded-lg text-slate-400 hover:text-blue-600 transition-colors"
+                                        title="在该层级添加资产"
+                                    >
+                                        <Plus size={18} />
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Items Grid */}
+                        <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {group.items.map(item => (
+                                <div key={item.id} className="border border-slate-100 rounded-lg p-3 hover:shadow-md transition-shadow bg-white group relative">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-2 h-8 rounded-full" style={{backgroundColor: item.color}}></div>
+                                            <div>
+                                                <div className="font-bold text-slate-700 text-sm">{item.targetName}</div>
+                                                <div className="text-[10px] text-slate-400">目标权重</div>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="font-mono font-bold text-slate-800">{item.targetWeight}%</div>
+                                            <div className="text-[10px] text-slate-400">
+                                                (占该层级 {(item.targetWeight / group.totalWeight * 100).toFixed(0)}%)
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    {isCurrentActive && (
+                                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-white border border-slate-100 shadow-sm rounded flex">
+                                             <button onClick={() => openItemForm(item)} className="p-1.5 text-slate-400 hover:text-blue-600 border-r border-slate-100">
+                                                <Edit2 size={12} />
+                                             </button>
+                                             <button onClick={() => handleDeleteItem(item.id)} className="p-1.5 text-slate-400 hover:text-red-600">
+                                                <Trash2 size={12} />
+                                             </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                  ))
+              )}
             </div>
 
+            {/* Add New Layer Button (implicitly adds item to new layer) */}
+            {isCurrentActive && groupedItems.length > 0 && (
+                <div className="text-center pt-2 pb-6">
+                    <button 
+                        onClick={() => openItemForm()}
+                        className="inline-flex items-center gap-2 px-6 py-2 bg-white border-2 border-dashed border-slate-300 rounded-xl text-slate-500 hover:border-blue-400 hover:text-blue-600 transition-all font-medium"
+                    >
+                        <Plus size={18} />
+                        添加新的防御层级 / 资产
+                    </button>
+                </div>
+            )}
+
              {/* Delete Version Button */}
-             <div className="flex justify-end pt-4">
+             <div className="flex justify-end pt-4 pb-8 border-t border-slate-100">
                 <button 
                   onClick={() => handleDeleteVersion(currentVersion.id)}
                   className="text-xs text-red-400 hover:text-red-600 flex items-center gap-1 opacity-60 hover:opacity-100 transition-opacity"
@@ -461,7 +552,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
             </div>
             <form onSubmit={handleSaveItem} className="p-6 space-y-4">
                
-               {/* New Asset Selector */}
+               {/* Asset Selector */}
                <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">选择资产标的</label>
                 <div className="relative">
@@ -485,23 +576,36 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
                 )}
                </div>
 
+               {/* Module/Layer Selector with Presets */}
                <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">模块/策略类别</label>
-                <input 
-                  type="text" required placeholder="如：生存层 / 结构层 / 核心持仓"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  value={itemModule} onChange={e => setItemModule(e.target.value)}
-                />
-                <p className="text-[10px] text-slate-400 mt-1">用于将不同资产进行分组统计</p>
+                <label className="block text-sm font-medium text-slate-700 mb-1">所属层级 / 模块</label>
+                <div className="relative">
+                    <input 
+                    type="text" required placeholder="如：第一层：秩序底线"
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none pr-8"
+                    value={itemModule} onChange={e => setItemModule(e.target.value)}
+                    list="module-presets"
+                    />
+                     <datalist id="module-presets">
+                        {MODULE_PRESETS.map(p => <option key={p} value={p} />)}
+                        {/* Also add existing modules in this strategy to the list */}
+                        {groupedItems.map(g => <option key={g.name} value={g.name} />)}
+                    </datalist>
+                    <ArrowDown size={14} className="absolute right-3 top-3 text-slate-400 pointer-events-none opacity-50" />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">输入或选择所属的防御层级。</p>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">目标权重 (%)</label>
-                <input 
-                  type="number" required min="0" max="100" step="0.1"
-                  className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                  value={itemWeight} onChange={e => setItemWeight(e.target.value)}
-                />
+                <div className="flex items-center gap-2">
+                     <input 
+                        type="number" required min="0" max="100" step="0.1"
+                        className="flex-1 px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                        value={itemWeight} onChange={e => setItemWeight(e.target.value)}
+                    />
+                    <span className="text-sm text-slate-500 font-medium">占总仓位</span>
+                </div>
               </div>
 
               <div>

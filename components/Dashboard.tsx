@@ -3,7 +3,7 @@ import {
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend 
 } from 'recharts';
-import { TrendingUp, DollarSign, Activity, Wallet, History, Calendar, Filter, ArrowRight } from 'lucide-react';
+import { TrendingUp, DollarSign, Activity, Wallet, History, Calendar, Filter, ArrowRight, Layers, LayoutGrid } from 'lucide-react';
 import { StrategyVersion, SnapshotItem } from '../types';
 import { StorageService } from '../services/storageService';
 
@@ -13,10 +13,12 @@ interface DashboardProps {
 }
 
 type ViewMode = 'strategy' | 'total';
+type AllocationView = 'asset' | 'layer'; // New: Toggle between Asset view and Layer view
 type TimeRange = 'all' | 'ytd' | '1y';
 
 const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('strategy');
+  const [allocationView, setAllocationView] = useState<AllocationView>('asset');
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
 
   // --- Date Filtering & Baseline Logic ---
@@ -66,8 +68,6 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
     if (!firstInWindow) return { startSnapshot: null, endSnapshot: end };
 
     const idx = sortedAllSnapshots.findIndex(s => s.id === firstInWindow.id);
-    // If there is a previous snapshot, use it as baseline. 
-    // If not (e.g. data starts inside the window), use the first one as baseline (profit starts at 0 for period).
     const baseline = idx > 0 ? sortedAllSnapshots[idx - 1] : null;
 
     return { startSnapshot: baseline, endSnapshot: end };
@@ -91,22 +91,14 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
   // --- Calculate Display Metrics ---
   const endMetrics = getSnapshotMetrics(endSnapshot);
   const startMetrics = getSnapshotMetrics(startSnapshot);
-
-  // Key Logic: 
-  // If TimeRange == 'all', Profit = End.Value - End.Invested
-  // If TimeRange != 'all', Profit = (End.Value - End.Invested) - (Start.Value - Start.Invested)
-  // This gives the "Profit generated DURING the period"
   
   const displayValue = endMetrics.value;
-  // For invested, usually we show Total Invested at end point
   const displayInvested = endMetrics.invested; 
   
   const periodProfit = timeRange === 'all' 
     ? (endMetrics.value - endMetrics.invested)
     : (endMetrics.value - endMetrics.invested) - (startMetrics.value - startMetrics.invested);
 
-  // Calculate Period Yield (Simple return on average capital or just end return?)
-  // Simple approximation: Period Profit / End Invested (or Avg Invested). keeping simple.
   const returnRate = displayInvested > 0 ? (periodProfit / displayInvested) * 100 : 0;
 
 
@@ -122,9 +114,6 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
     
     if (viewMode === 'strategy') {
       if (!appliedStrategy) return [];
-      
-      // Calculate strategy pool size (might differ from total strategy assets if unmapped items exist?)
-      // We use the endMetrics calculated earlier for consistency
       const stratTotal = endMetrics.value; 
 
       const actualMap = new Map<string, number>();
@@ -132,51 +121,67 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
         if (a.strategyId) actualMap.set(a.strategyId, a.marketValue);
       });
 
-      return appliedStrategy.items.map(s => {
-        const actualValue = actualMap.get(s.id) || 0;
-        const actualPercent = stratTotal > 0 ? (actualValue / stratTotal) * 100 : 0;
-        
-        return {
-          name: s.targetName,
-          value: actualValue,
-          percent: parseFloat(actualPercent.toFixed(1)), // 0-100 scale
-          targetPercent: s.targetWeight,
-          color: s.color,
-          deviation: actualPercent - s.targetWeight
-        };
-      }).sort((a, b) => b.value - a.value);
+      // View 1: By Asset (Existing)
+      if (allocationView === 'asset') {
+          return appliedStrategy.items.map(s => {
+            const actualValue = actualMap.get(s.id) || 0;
+            const actualPercent = stratTotal > 0 ? (actualValue / stratTotal) * 100 : 0;
+            
+            return {
+              name: s.targetName,
+              value: actualValue,
+              percent: parseFloat(actualPercent.toFixed(1)), // 0-100 scale
+              targetPercent: s.targetWeight,
+              color: s.color,
+              deviation: actualPercent - s.targetWeight
+            };
+          }).sort((a, b) => b.value - a.value);
+      } else {
+          // View 2: By Layer (Grouped by Module)
+          const layerGroups: Record<string, { actualValue: number, targetWeight: number, color: string }> = {};
+          
+          appliedStrategy.items.forEach(item => {
+              const layerName = item.module || '未分类';
+              if (!layerGroups[layerName]) {
+                  layerGroups[layerName] = { actualValue: 0, targetWeight: 0, color: item.color }; // Pick first color as seed
+              }
+              const actualValue = actualMap.get(item.id) || 0;
+              layerGroups[layerName].actualValue += actualValue;
+              layerGroups[layerName].targetWeight += item.targetWeight;
+          });
+
+          // Generate distinctive colors for layers if they share same seed color
+          const colors = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#64748b'];
+
+          return Object.entries(layerGroups).map(([name, data], idx) => {
+              const actualPercent = stratTotal > 0 ? (data.actualValue / stratTotal) * 100 : 0;
+              return {
+                  name,
+                  value: data.actualValue,
+                  percent: parseFloat(actualPercent.toFixed(1)),
+                  targetPercent: data.targetWeight,
+                  color: colors[idx % colors.length], // Cyclic colors
+                  deviation: actualPercent - data.targetWeight
+              };
+          }).sort((a, b) => b.targetPercent - a.targetPercent); // Sort layers by target weight usually better for layers
+      }
 
     } else {
       // Total Asset View: Group by Category
       const grouped = endSnapshot.assets.reduce((acc, curr) => {
         let cat = '其他';
-        
         switch (curr.category) {
-          case 'security':
-          case 'fund':
-            cat = '股票基金'; // Equity
-            break;
-          case 'fixed':
-          case 'wealth':
-            cat = '现金固收'; // Fixed Income
-            break;
-          case 'gold':
-          case 'crypto':
-            cat = '商品另类'; // Alternative / Commodities
-            break;
-          default:
-            cat = '其他';
+          case 'security': case 'fund': cat = '股票基金'; break;
+          case 'fixed': case 'wealth': cat = '现金固收'; break;
+          case 'gold': case 'crypto': cat = '商品另类'; break;
+          default: cat = '其他';
         }
-
         acc[cat] = (acc[cat] || 0) + curr.marketValue;
         return acc;
       }, {} as Record<string, number>);
 
       const colors: Record<string, string> = {
-        '股票基金': '#3b82f6', // Blue
-        '商品另类': '#f59e0b', // Amber
-        '现金固收': '#64748b', // Slate
-        '其他': '#a855f7'      // Purple
+        '股票基金': '#3b82f6', '商品另类': '#f59e0b', '现金固收': '#64748b', '其他': '#a855f7'
       };
 
       return Object.keys(grouped).map(key => ({
@@ -186,7 +191,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
         color: colors[key] || '#cbd5e1'
       })).sort((a, b) => b.value - a.value);
     }
-  }, [appliedStrategy, endSnapshot, endMetrics, viewMode]);
+  }, [appliedStrategy, endSnapshot, endMetrics, viewMode, allocationView]);
 
   // --- Chart Data: History ---
   const historyData = useMemo(() => {
@@ -338,9 +343,28 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
         
         {/* Allocation Chart */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">
-            {viewMode === 'strategy' ? '期末策略偏离度' : '期末资产分布'}
-          </h3>
+          <div className="flex items-center justify-between mb-6">
+             <h3 className="text-lg font-bold text-slate-800">
+               {viewMode === 'strategy' ? '期末策略偏离度' : '期末资产分布'}
+             </h3>
+             {viewMode === 'strategy' && (
+                 <div className="flex bg-slate-100 p-0.5 rounded-lg">
+                     <button 
+                        onClick={() => setAllocationView('asset')}
+                        className={`px-2 py-1 text-xs font-medium rounded-md flex items-center gap-1 transition-all ${allocationView === 'asset' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+                     >
+                        <LayoutGrid size={12} /> 具体标的
+                     </button>
+                     <button 
+                        onClick={() => setAllocationView('layer')}
+                        className={`px-2 py-1 text-xs font-medium rounded-md flex items-center gap-1 transition-all ${allocationView === 'layer' ? 'bg-white shadow-sm text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+                     >
+                        <Layers size={12} /> 策略层级
+                     </button>
+                 </div>
+             )}
+          </div>
+          
           {allocationData.length > 0 ? (
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -353,7 +377,6 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
                     outerRadius={75}
                     paddingAngle={3}
                     dataKey="value"
-                    // Modified: Use payload.percent directly to avoid 100x multiplication issues if Recharts passes 0-100 or 0-1
                     label={({ payload }) => `${payload.percent}%`}
                     labelLine={{ stroke: '#cbd5e1', strokeWidth: 1 }}
                   >
@@ -373,12 +396,12 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
           
           <div className="mt-6 border-t border-slate-50 pt-4">
             <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
-              明细数据 ({endSnapshot?.date})
+              明细数据 ({allocationView === 'layer' ? '按防御层级' : '按具体标的'})
             </h4>
             
             {/* Header Row */}
             <div className="flex items-center justify-between text-xs font-semibold text-slate-400 mb-2 px-2">
-               <span className="flex-1">资产名称</span>
+               <span className="flex-1">{allocationView === 'layer' ? '层级名称' : '资产名称'}</span>
                <span className="flex-1 text-right">持有市值</span>
                <span className="w-32 text-right">占比 / 目标 (偏离)</span>
             </div>
