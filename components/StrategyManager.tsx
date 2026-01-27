@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Plus, Trash2, Edit2, AlertCircle, History, Copy, Calendar, BookOpen, Save, X, Layers, Layout, Calculator } from 'lucide-react';
+import remarkGfm from 'remark-gfm';
+import { 
+  Plus, Trash2, Edit2, AlertCircle, History, Copy, Calendar, BookOpen, 
+  Save, X, Layers, Layout, Calculator, Maximize2, ArrowLeft, FileText
+} from 'lucide-react';
 import { StrategyVersion, StrategyLayer, StrategyTarget, Asset } from '../types';
 import { generateId, StorageService } from '../services/storageService';
 
@@ -18,6 +22,10 @@ const PRESET_COLORS = [
 
 const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions, assets, onUpdate }) => {
   const [activeVersionId, setActiveVersionId] = useState<string | null>(null);
+  
+  // View Mode: 'overview' (default) or 'full_ips' (readme mode)
+  const [isFullView, setIsFullView] = useState(false);
+
   const [isEditingMeta, setIsEditingMeta] = useState(false);
   
   // Meta Form State
@@ -40,10 +48,22 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
   const currentVersion = versions.find(v => v.id === activeVersionId);
   const isCurrentActive = currentVersion?.status === 'active';
 
-  // --- Core: Save Logic ---
-  // Unlike before, we don't need to parse/serialize layers. The object structure in `currentVersion.layers` is the truth.
-  // We just need to clone and update the version object in the `versions` array.
+  // --- Truncation Logic ---
+  const PREVIEW_LINES = 10;
+  const { descriptionPreview, isTruncated } = useMemo(() => {
+    if (!currentVersion?.description) return { descriptionPreview: '', isTruncated: false };
+    const lines = currentVersion.description.split('\n');
+    if (lines.length <= PREVIEW_LINES) {
+        return { descriptionPreview: currentVersion.description, isTruncated: false };
+    }
+    return { 
+        descriptionPreview: lines.slice(0, PREVIEW_LINES).join('\n'),
+        isTruncated: true
+    };
+  }, [currentVersion]);
 
+
+  // --- Core: Save Logic ---
   const updateCurrentVersion = (newLayers: StrategyLayer[]) => {
       if (!currentVersion) return;
       const updatedVersions = versions.map(v => 
@@ -85,7 +105,6 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
           });
       }
       
-      // Sort by weight desc just to keep clean? Or keep user order? Let's sort by weight for now as per dashboard logic
       newLayers.sort((a,b) => b.weight - a.weight);
 
       updateCurrentVersion(newLayers);
@@ -150,7 +169,6 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
                   color: modalAsset.color
               });
           }
-          // Sort by inner weight desc
           newItems.sort((a, b) => b.weight - a.weight);
           return { ...l, items: newItems };
       });
@@ -203,7 +221,6 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
   const totalLayerWeight = currentVersion ? currentVersion.layers.reduce((sum, l) => sum + l.weight, 0) : 0;
 
   // --- Derived State: Available Assets for Modal ---
-  // Calculate which assets are already used in this strategy version
   const availableAssetsForModal = useMemo(() => {
     if (!currentVersion || !modalAsset.isOpen) return [];
 
@@ -215,8 +232,6 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
     });
 
     return assets.filter(asset => {
-        // If the asset is used, exclude it.
-        // UNLESS we are currently editing the item that uses this asset (so we don't hide the current selection)
         const isUsed = usedAssetIds.has(asset.id);
         const isSelf = modalAsset.item && modalAsset.item.assetId === asset.id;
         return !isUsed || isSelf;
@@ -228,6 +243,80 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
       return <div className="p-10 text-center"><button onClick={handleCreateNewVersion} className="bg-blue-600 text-white px-6 py-2 rounded">初始化策略</button></div>;
   }
 
+  // --- View 1: Full IPS Details / Edit Mode ---
+  if (isFullView && currentVersion) {
+      return (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-100 h-[calc(100vh-100px)] flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+                <div className="flex items-center gap-4">
+                    <button onClick={() => { setIsFullView(false); setIsEditingMeta(false); }} className="p-2 hover:bg-slate-200 rounded-full text-slate-500 transition-colors" title="返回概览">
+                        <ArrowLeft size={20} />
+                    </button>
+                    <div>
+                        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                             <BookOpen size={20} className="text-blue-600"/> 投资策略说明书 (IPS)
+                        </h2>
+                        <p className="text-xs text-slate-500">{currentVersion.name}</p>
+                    </div>
+                </div>
+                 {isCurrentActive && (
+                     !isEditingMeta ? (
+                        <button onClick={() => { 
+                            setMetaName(currentVersion.name); 
+                            setMetaDesc(currentVersion.description); 
+                            setMetaDate(currentVersion.startDate); 
+                            setIsEditingMeta(true); 
+                        }} className="px-4 py-2 bg-white border border-slate-200 text-sm rounded hover:text-blue-600 flex gap-2 items-center shadow-sm transition-colors">
+                            <Edit2 size={16} /> 编辑文档
+                        </button>
+                     ) : (
+                        <div className="flex gap-2">
+                           <button onClick={() => setIsEditingMeta(false)} className="px-4 py-2 border rounded text-sm hover:bg-slate-50">取消</button>
+                           <button onClick={handleSaveMeta} className="px-4 py-2 bg-slate-900 text-white rounded text-sm hover:bg-slate-800 flex gap-2 items-center"><Save size={16}/> 保存</button>
+                        </div>
+                     )
+                  )}
+            </div>
+            
+            {/* Content Area */}
+            <div className="flex-1 overflow-y-auto p-8 w-full max-w-5xl mx-auto">
+                {isEditingMeta ? (
+                    <div className="space-y-4 h-full flex flex-col">
+                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 shrink-0">
+                           <div>
+                               <label className="block text-xs font-bold text-slate-500 mb-1">策略版本名称</label>
+                               <input className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" value={metaName} onChange={e => setMetaName(e.target.value)} />
+                           </div>
+                           <div>
+                               <label className="block text-xs font-bold text-slate-500 mb-1">策略启用日期</label>
+                               <input type="date" className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" value={metaDate} onChange={e => setMetaDate(e.target.value)} />
+                           </div>
+                       </div>
+                       <div className="flex-1 flex flex-col min-h-[400px]">
+                           <label className="block text-xs font-bold text-slate-500 mb-1 flex justify-between">
+                               <span>Markdown 内容</span>
+                               <a href="https://markdown.com.cn/basic-syntax/" target="_blank" className="text-blue-500 hover:underline">语法参考</a>
+                           </label>
+                           <textarea 
+                             className="w-full p-4 border border-slate-200 rounded-lg resize-none flex-1 font-mono text-sm leading-relaxed focus:ring-2 focus:ring-blue-500 outline-none shadow-inner bg-slate-50" 
+                             value={metaDesc} 
+                             onChange={e => setMetaDesc(e.target.value)} 
+                             placeholder="# 输入你的策略文档..."
+                           />
+                       </div>
+                    </div>
+                ) : (
+                    <article className="prose prose-slate max-w-none prose-headings:text-slate-800 prose-p:text-slate-600 prose-li:text-slate-600 prose-table:border-collapse prose-th:border prose-th:border-slate-200 prose-th:p-2 prose-td:border prose-td:border-slate-200 prose-td:p-2 prose-th:bg-slate-50">
+                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{currentVersion.description || '*暂无文档，请点击右上角编辑补充...*'}</ReactMarkdown>
+                    </article>
+                )}
+            </div>
+        </div>
+      );
+  }
+
+  // --- View 2: Overview (Sidebar + Split View) ---
   return (
     <div className="flex flex-col lg:flex-row gap-6 pb-20 items-start h-[calc(100vh-100px)]">
       
@@ -257,31 +346,28 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
         {currentVersion && (
           <div className="flex flex-col h-full space-y-6 overflow-y-auto pr-2 pb-10 scrollbar-thin scrollbar-thumb-slate-200">
             
-            {/* IPS Header */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-100 shrink-0">
+            {/* IPS Header (Truncated) */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100 shrink-0 relative overflow-hidden group">
                <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                   <div>
                     <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><BookOpen size={20} className="text-blue-600"/>投资策略说明书</h2>
                     <p className="text-xs text-slate-500 mt-1">{currentVersion.name}</p>
                   </div>
-                  {isCurrentActive && !isEditingMeta && (
-                     <button onClick={() => { setMetaName(currentVersion.name); setMetaDesc(currentVersion.description); setMetaDate(currentVersion.startDate); setIsEditingMeta(true); }} className="px-4 py-2 bg-white border border-slate-200 text-sm rounded hover:text-blue-600 flex gap-2"><Edit2 size={16} /> 编辑</button>
-                  )}
+                  <button onClick={() => setIsFullView(true)} className="px-3 py-1.5 bg-white border border-slate-200 text-xs font-medium rounded hover:text-blue-600 flex gap-1 items-center shadow-sm transition-colors text-slate-600">
+                      <Maximize2 size={14} /> 详情 / 编辑
+                  </button>
                </div>
-               <div className="p-6">
-                  {isEditingMeta ? (
-                    <div className="space-y-4">
-                       <input className="w-full px-3 py-2 border rounded" value={metaName} onChange={e => setMetaName(e.target.value)} placeholder="版本名称"/>
-                       <textarea className="w-full px-3 py-2 border rounded h-32" value={metaDesc} onChange={e => setMetaDesc(e.target.value)} placeholder="Markdown 内容"/>
-                       <div className="flex justify-end gap-2">
-                           <button onClick={() => setIsEditingMeta(false)} className="px-3 py-1 border rounded">取消</button>
-                           <button onClick={handleSaveMeta} className="px-3 py-1 bg-slate-900 text-white rounded">保存</button>
+               <div className="p-6 relative">
+                  <article className="prose prose-sm max-w-none text-slate-600 opacity-80 prose-table:border-collapse prose-th:border prose-th:border-slate-200 prose-th:p-2 prose-td:border prose-td:border-slate-200 prose-td:p-2 prose-th:bg-slate-50">
+                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{descriptionPreview || '*暂无文档*'}</ReactMarkdown>
+                  </article>
+                  
+                  {isTruncated && (
+                       <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-white via-white/90 to-transparent flex items-end justify-center pb-4 z-10">
+                           <button onClick={() => setIsFullView(true)} className="text-blue-600 text-sm font-bold flex items-center gap-1 hover:underline bg-white/50 px-4 py-1 rounded-full backdrop-blur-sm shadow-sm border border-blue-100 transition-all hover:bg-white">
+                              <FileText size={14} /> 阅读完整文档
+                           </button>
                        </div>
-                    </div>
-                  ) : (
-                    <article className="prose prose-sm max-w-none text-slate-600">
-                       <ReactMarkdown>{currentVersion.description || '*暂无文档*'}</ReactMarkdown>
-                    </article>
                   )}
                </div>
             </div>
@@ -374,7 +460,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
         )}
       </div>
 
-      {/* --- Modals --- */}
+      {/* --- Modals (Reuse Existing) --- */}
       
       {/* Layer Modal */}
       {modalLayer.isOpen && (

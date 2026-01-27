@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Plus, Calendar, Trash2, Coins, Landmark, Briefcase, TrendingUp, DollarSign, Save, X, Activity, Search, FileText, ChevronDown, ChevronUp, ArrowRight, Wallet, Bitcoin } from 'lucide-react';
 import { SnapshotItem, StrategyVersion, AssetRecord, AssetCategory, Asset } from '../types';
 import { generateId, StorageService } from '../services/storageService';
@@ -543,8 +544,8 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                      {!expandedNotes.has(s.id) && <span className="text-slate-400 font-normal truncate max-w-[200px] ml-2">{s.note}</span>}
                    </button>
                    {expandedNotes.has(s.id) && (
-                     <div className="mt-2 text-sm text-slate-700 prose prose-sm max-w-none prose-p:my-1">
-                        <ReactMarkdown>{s.note}</ReactMarkdown>
+                     <div className="mt-2 text-sm text-slate-700 prose prose-sm max-w-none prose-p:my-1 prose-table:border-collapse prose-th:border prose-th:border-slate-200 prose-th:p-2 prose-td:border prose-td:border-slate-200 prose-td:p-2 prose-th:bg-slate-50">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{s.note}</ReactMarkdown>
                      </div>
                    )}
                  </div>
