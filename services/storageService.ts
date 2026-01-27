@@ -1,18 +1,15 @@
 import { StrategyVersion, SnapshotItem, Asset, AppData } from '../types';
 
 // --- 配置区域 ---
-// 将此设置为 true，即可脱离后端独立运行，数据保存在 LocalStorage
-// 设置为 false 以连接本地运行的 Node.js 后端 (server.js)
 const USE_MOCK = false; 
 const API_BASE = '/api'; 
-const STORAGE_KEY = 'invest_track_mock_db_v1';
+const STORAGE_KEY = 'invest_track_mock_db_v2';
 
 export const generateId = (): string => {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 };
 
-// --- MOCK 数据初始化 ---
-// 如果本地没有数据，使用这就作为初始演示数据
+// --- MOCK 数据初始化 (Updated for V2 Hierarchy) ---
 const INITIAL_MOCK_DB: AppData = {
   assets: [
     { id: 'a1', type: 'security', name: '腾讯控股', ticker: '00700.HK' },
@@ -25,14 +22,30 @@ const INITIAL_MOCK_DB: AppData = {
     {
       id: 's1',
       name: '2024 稳健增长策略',
-      description: '# 2024 核心指导思想\n\n1. **核心持仓 (70%)**: 专注于能够产生现金流的优质红利资产。\n2. **卫星持仓 (20%)**: 配置美股科技成长。\n3. **避险资产 (10%)**: 黄金与比特币配置，对冲法币贬值风险。',
+      description: '# 2024 核心指导思想\n\n1. **核心持仓**: 专注于能够产生现金流的优质红利资产。\n2. **卫星持仓**: 配置美股科技成长。',
       startDate: '2024-01-01',
       status: 'active',
-      items: [
-        { id: 't1', assetId: 'a1', targetName: '腾讯控股', module: '核心中概', targetWeight: 40, color: '#3b82f6' },
-        { id: 't2', assetId: 'a2', targetName: '纳指ETF', module: '海外成长', targetWeight: 30, color: '#ec4899' },
-        { id: 't3', assetId: 'a3', targetName: '实物黄金', module: '避险商品', targetWeight: 20, color: '#eab308' },
-        { id: 't4', assetId: 'a5', targetName: 'BTC', module: '数字黄金', targetWeight: 10, color: '#f97316' }
+      layers: [
+        {
+          id: 'l1',
+          name: '第一层：秩序底线',
+          weight: 40,
+          description: '高股息红利资产，提供基础现金流',
+          items: [
+             { id: 't1', assetId: 'a1', targetName: '腾讯控股', weight: 50, color: '#3b82f6', note: '中国互联网基础设施' },
+             { id: 't2', assetId: 'a4', targetName: '定期存款', weight: 50, color: '#64748b', note: '无风险利率基准' }
+          ]
+        },
+        {
+          id: 'l2',
+          name: '第二层：战略进攻',
+          weight: 60,
+          description: '科技成长与避险',
+          items: [
+             { id: 't3', assetId: 'a2', targetName: '纳指ETF', weight: 70, color: '#ec4899', note: '全球科技龙头' },
+             { id: 't4', assetId: 'a3', targetName: '实物黄金', weight: 30, color: '#eab308', note: '抗法币通胀' }
+          ]
+        }
       ]
     }
   ],
@@ -57,7 +70,6 @@ const INITIAL_MOCK_DB: AppData = {
 const getMockDB = (): AppData => {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored) return JSON.parse(stored);
-  // Initialize
   localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_MOCK_DB));
   return INITIAL_MOCK_DB;
 };
@@ -67,7 +79,7 @@ const saveMockDB = (db: AppData) => {
 };
 
 const mockDelay = <T>(data: T): Promise<T> => {
-  return new Promise(resolve => setTimeout(() => resolve(data), 300)); // Simulate 300ms network delay
+  return new Promise(resolve => setTimeout(() => resolve(data), 300)); 
 };
 
 
@@ -147,14 +159,12 @@ export const StorageService = {
   createStrategy: async (strategy: StrategyVersion) => {
     if (USE_MOCK) {
       const db = getMockDB();
-      // Handle optimistic update: if ID exists update, else push
       const idx = db.strategies.findIndex(s => s.id === strategy.id);
       if (idx !== -1) {
         db.strategies[idx] = strategy;
       } else {
         db.strategies.push(strategy);
       }
-      // Simulate archiving logic simply by saving the state
       saveMockDB(db);
       return mockDelay(void 0);
     }
@@ -236,7 +246,7 @@ export const StorageService = {
       description: '# 初始化策略...',
       startDate: new Date().toISOString().slice(0, 10),
       status: 'active',
-      items: []
+      layers: []
     };
   }
 };

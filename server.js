@@ -17,36 +17,30 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 
-// --- Fix for __dirname in ES Modules ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// --- Path Configuration ---
-// Ensure data directory exists (better for Docker volume mounting)
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)){
     fs.mkdirSync(DATA_DIR);
 }
-const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'invest_track.db');
+const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'invest_track_v2.db'); // Changed DB name to force fresh start or migration manually
 
 app.use(cors());
 app.use(express.json());
 
-// --- Static Files Serving (For Docker/Production) ---
-// Serve the static files from the React app build directory
 const distPath = path.join(__dirname, 'dist');
 if (fs.existsSync(distPath)) {
     app.use(express.static(distPath));
 }
 
-// --- Database Initialization ---
-// sqlite3 needs explicit verbose call when imported this way
 const sqlite3Verbose = sqlite3.verbose();
 const db = new sqlite3Verbose.Database(DB_PATH);
 
+// --- Database Schema (Redesigned) ---
 const initSql = `
 CREATE TABLE IF NOT EXISTS assets (
     id TEXT PRIMARY KEY,
@@ -65,14 +59,28 @@ CREATE TABLE IF NOT EXISTS strategy_versions (
     created_at INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS strategy_targets (
+-- New Table: Layers (Level 2)
+CREATE TABLE IF NOT EXISTS strategy_layers (
     id TEXT PRIMARY KEY,
     version_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    weight REAL NOT NULL, -- The weight of this layer in the whole portfolio (0-100)
+    description TEXT,
+    sort_order INTEGER DEFAULT 0,
+    FOREIGN KEY(version_id) REFERENCES strategy_versions(id) ON DELETE CASCADE
+);
+
+-- Updated Table: Targets (Level 3) - Linked to Layer, not Version directly
+CREATE TABLE IF NOT EXISTS strategy_targets (
+    id TEXT PRIMARY KEY,
+    layer_id TEXT NOT NULL,
     asset_id TEXT NOT NULL,
-    module TEXT,
-    target_ratio REAL NOT NULL,
+    target_name TEXT, -- Can override asset name
+    weight REAL NOT NULL, -- The weight of this target in the LAYER (0-100)
     color TEXT,
-    FOREIGN KEY(version_id) REFERENCES strategy_versions(id) ON DELETE CASCADE,
+    note TEXT,
+    sort_order INTEGER DEFAULT 0,
+    FOREIGN KEY(layer_id) REFERENCES strategy_layers(id) ON DELETE CASCADE,
     FOREIGN KEY(asset_id) REFERENCES assets(id)
 );
 
@@ -104,144 +112,210 @@ CREATE TABLE IF NOT EXISTS positions (
 db.serialize(() => {
     db.exec(initSql, (err) => {
         if (err) console.error("DB Init Error:", err);
-        else {
-            console.log("Database initialized successfully at", DB_PATH);
-        }
+        else console.log("Database initialized successfully (Schema V2) at", DB_PATH);
+    });
+});
+
+// --- Helper Functions ---
+const runQuery = (sql, params = []) => new Promise((resolve, reject) => {
+    db.run(sql, params, function(err) {
+        if (err) reject(err);
+        else resolve(this);
+    });
+});
+
+const getQuery = (sql, params = []) => new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+        if (err) reject(err);
+        else resolve(rows);
     });
 });
 
 // --- API Endpoints ---
 
 // 1. Assets
-app.get('/api/assets', (req, res) => {
-    db.all("SELECT * FROM assets ORDER BY created_at DESC", [], (err, rows) => {
-        if (err) return res.status(500).json({error: err.message});
+app.get('/api/assets', async (req, res) => {
+    try {
+        const rows = await getQuery("SELECT * FROM assets ORDER BY created_at DESC");
         res.json(rows);
-    });
+    } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/assets', (req, res) => {
+app.post('/api/assets', async (req, res) => {
     const { name, type, ticker } = req.body;
     const id = uuidv4();
     const now = Date.now();
-    db.run("INSERT INTO assets (id, type, name, ticker, created_at) VALUES (?, ?, ?, ?, ?)",
-        [id, type, name, ticker, now], function(err) {
-            if (err) return res.status(500).json({error: err.message});
-            res.json({ id, name, type, ticker, created_at: now });
-        }
-    );
+    try {
+        await runQuery("INSERT INTO assets (id, type, name, ticker, created_at) VALUES (?, ?, ?, ?, ?)", [id, type, name, ticker, now]);
+        res.json({ id, name, type, ticker, created_at: now });
+    } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.put('/api/assets/:id', (req, res) => {
+app.put('/api/assets/:id', async (req, res) => {
     const { name, type, ticker } = req.body;
-    const { id } = req.params;
-    db.run("UPDATE assets SET name = ?, type = ?, ticker = ? WHERE id = ?",
-        [name, type, ticker, id], function(err) {
-            if (err) return res.status(500).json({error: err.message});
-            res.json({ success: true, id });
-        }
-    );
+    try {
+        await runQuery("UPDATE assets SET name = ?, type = ?, ticker = ? WHERE id = ?", [name, type, ticker, req.params.id]);
+        res.json({ success: true, id: req.params.id });
+    } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.delete('/api/assets/:id', (req, res) => {
-    const { id } = req.params;
-    db.run("DELETE FROM assets WHERE id = ?", [id], function(err) {
-        if (err) return res.status(500).json({error: err.message});
-        res.json({ success: true, id });
-    });
+app.delete('/api/assets/:id', async (req, res) => {
+    try {
+        await runQuery("DELETE FROM assets WHERE id = ?", [req.params.id]);
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-// 2. Strategies
-app.get('/api/strategies', (req, res) => {
-    const sql = `
-        SELECT 
-            v.*, 
-            json_group_array(
-                json_object(
-                    'id', t.id,
-                    'assetId', t.asset_id,
-                    'targetRatio', t.target_ratio,
-                    'color', t.color,
-                    'targetName', a.name,
-                    'module', t.module
-                )
-            ) as items 
-        FROM strategy_versions v
-        LEFT JOIN strategy_targets t ON v.id = t.version_id
-        LEFT JOIN assets a ON t.asset_id = a.id
-        GROUP BY v.id
-        ORDER BY v.start_date DESC
-    `;
-    
-    db.all(sql, [], (err, rows) => {
-        if (err) return res.status(500).json({error: err.message});
-        const result = rows.map(row => ({
-            id: row.id,
-            name: row.name,
-            description: row.description,
-            startDate: row.start_date, // Map snake_case to camelCase
-            status: row.status,
-            items: JSON.parse(row.items).filter(i => i.id !== null).map(i => ({
-                id: i.id, 
-                targetName: i.targetName,
-                targetWeight: i.targetRatio,
-                color: i.color,
-                module: i.module || '默认模块', // Explicitly read module from DB target
-                assetId: i.assetId 
-            }))
+// 2. Strategies (Hierarchical)
+app.get('/api/strategies', async (req, res) => {
+    try {
+        // 1. Get Versions
+        const versions = await getQuery("SELECT * FROM strategy_versions ORDER BY start_date DESC");
+        
+        // 2. Get Layers
+        const layers = await getQuery("SELECT * FROM strategy_layers ORDER BY sort_order ASC, weight DESC");
+        
+        // 3. Get Targets (Joined with Asset Name for convenience)
+        const targets = await getQuery(`
+            SELECT t.*, a.name as original_asset_name 
+            FROM strategy_targets t
+            LEFT JOIN assets a ON t.asset_id = a.id
+            ORDER BY t.sort_order ASC, t.weight DESC
+        `);
+
+        // 4. Assemble Hierarchy
+        const result = versions.map(v => {
+            const vLayers = layers.filter(l => l.version_id === v.id).map(l => {
+                const lTargets = targets.filter(t => t.layer_id === l.id).map(t => ({
+                    id: t.id,
+                    assetId: t.asset_id,
+                    targetName: t.target_name || t.original_asset_name,
+                    weight: t.weight,
+                    color: t.color,
+                    note: t.note
+                }));
+
+                return {
+                    id: l.id,
+                    name: l.name,
+                    weight: l.weight,
+                    description: l.description,
+                    items: lTargets
+                };
+            });
+
+            return {
+                id: v.id,
+                name: v.name,
+                description: v.description,
+                startDate: v.start_date, // snake_case -> camelCase manual mapping if needed, but DB is start_date. Frontend expects startDate
+                status: v.status,
+                layers: vLayers
+            };
+        });
+        
+        // Map DB snake_case to CamelCase where simple mapping didn't handle it
+        const finalResult = result.map(r => ({
+            ...r,
+            startDate: r.startDate
         }));
-        res.json(result);
-    });
+
+        res.json(finalResult);
+    } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/strategies', (req, res) => {
-    const { name, description, startDate, items } = req.body;
-    const id = uuidv4();
+app.post('/api/strategies', async (req, res) => {
+    const { name, description, startDate, layers } = req.body; // Expects hierarchy
+    const versionId = uuidv4();
     const now = Date.now();
     
     db.serialize(() => {
         db.run("BEGIN TRANSACTION");
         
+        // 1. Insert Version
         db.run("INSERT INTO strategy_versions (id, name, description, start_date, created_at) VALUES (?, ?, ?, ?, ?)",
-            [id, name, description, startDate, now]);
+            [versionId, name, description, startDate, now]);
             
-        if (items && items.length > 0) {
-            const stmt = db.prepare("INSERT INTO strategy_targets (id, version_id, asset_id, module, target_ratio, color) VALUES (?, ?, ?, ?, ?, ?)");
-            items.forEach(item => {
-                stmt.run(uuidv4(), id, item.assetId, item.module, item.targetWeight, item.color);
+        // 2. Insert Layers & Targets
+        if (layers && layers.length > 0) {
+            const layerStmt = db.prepare("INSERT INTO strategy_layers (id, version_id, name, weight, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)");
+            const targetStmt = db.prepare("INSERT INTO strategy_targets (id, layer_id, asset_id, target_name, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            
+            layers.forEach((layer, lIdx) => {
+                const layerId = uuidv4();
+                layerStmt.run(layerId, versionId, layer.name, layer.weight, layer.description || '', lIdx);
+                
+                if (layer.items && layer.items.length > 0) {
+                    layer.items.forEach((item, tIdx) => {
+                        targetStmt.run(
+                            uuidv4(), 
+                            layerId, 
+                            item.assetId, 
+                            item.targetName, 
+                            item.weight, 
+                            item.color, 
+                            item.note || '',
+                            tIdx
+                        );
+                    });
+                }
             });
-            stmt.finalize();
+            layerStmt.finalize();
+            targetStmt.finalize();
         }
         
         db.run("COMMIT", (err) => {
             if (err) res.status(500).json({error: err.message});
-            else res.json({ success: true, id });
+            else res.json({ success: true, id: versionId });
         });
     });
 });
 
 app.put('/api/strategies/:id', (req, res) => {
     const { id } = req.params;
-    const { name, description, startDate, status, items } = req.body;
+    const { name, description, startDate, status, layers } = req.body;
     
     db.serialize(() => {
         db.run("BEGIN TRANSACTION");
         
-        // Update Meta
+        // 1. Update Version
         db.run("UPDATE strategy_versions SET name=?, description=?, start_date=?, status=? WHERE id=?",
             [name, description, startDate, status, id]);
 
-        // Replace Items (Delete all then insert)
-        db.run("DELETE FROM strategy_targets WHERE version_id=?", [id]);
-
-        if (items && items.length > 0) {
-            const stmt = db.prepare("INSERT INTO strategy_targets (id, version_id, asset_id, module, target_ratio, color) VALUES (?, ?, ?, ?, ?, ?)");
-            items.forEach(item => {
-                // Keep existing item ID if present, else new UUID
-                stmt.run(item.id || uuidv4(), id, item.assetId, item.module, item.targetWeight, item.color);
-            });
-            stmt.finalize();
-        }
+        // 2. Cascade Delete Old Hierarchy (Since we are replacing structure)
+        // Note: SQLite FK ON DELETE CASCADE handles targets if we delete layers.
+        // But first we must find layers to delete.
+        // Actually, easier to delete from strategy_layers where version_id = id.
+        db.run("DELETE FROM strategy_layers WHERE version_id=?", [id], (err) => {
+             // 3. Re-insert Layers & Targets
+            if (layers && layers.length > 0) {
+                const layerStmt = db.prepare("INSERT INTO strategy_layers (id, version_id, name, weight, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)");
+                const targetStmt = db.prepare("INSERT INTO strategy_targets (id, layer_id, asset_id, target_name, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+                
+                layers.forEach((layer, lIdx) => {
+                    // Use existing ID if provided (to try and keep stability) or new one
+                    const layerId = layer.id || uuidv4(); 
+                    layerStmt.run(layerId, id, layer.name, layer.weight, layer.description || '', lIdx);
+                    
+                    if (layer.items && layer.items.length > 0) {
+                        layer.items.forEach((item, tIdx) => {
+                            targetStmt.run(
+                                item.id || uuidv4(), 
+                                layerId, 
+                                item.assetId, 
+                                item.targetName, 
+                                item.weight, 
+                                item.color, 
+                                item.note || '',
+                                tIdx
+                            );
+                        });
+                    }
+                });
+                layerStmt.finalize();
+                targetStmt.finalize();
+            }
+        });
 
         db.run("COMMIT", (err) => {
             if (err) res.status(500).json({error: err.message});
@@ -250,16 +324,16 @@ app.put('/api/strategies/:id', (req, res) => {
     });
 });
 
-app.delete('/api/strategies/:id', (req, res) => {
-    const { id } = req.params;
-    db.run("DELETE FROM strategy_versions WHERE id=?", [id], (err) => {
-        if (err) return res.status(500).json({error: err.message});
+app.delete('/api/strategies/:id', async (req, res) => {
+    try {
+        await runQuery("DELETE FROM strategy_versions WHERE id=?", [req.params.id]);
         res.json({ success: true });
-    });
+    } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-// 3. Snapshots
-app.get('/api/snapshots', (req, res) => {
+// 3. Snapshots (Positions table needs minimal change, strategy_id might need to be linked to targets)
+// Note: strategy_id in positions usually refers to a specific target rule.
+app.get('/api/snapshots', async (req, res) => {
     const sql = `
         SELECT 
             s.*,
@@ -285,27 +359,26 @@ app.get('/api/snapshots', (req, res) => {
         ORDER BY s.date DESC
     `;
 
-    db.all(sql, [], (err, rows) => {
-        if (err) return res.status(500).json({error: err.message});
+    try {
+        const rows = await getQuery(sql);
         const result = rows.map(row => ({
             id: row.id,
             date: row.date,
-            totalValue: row.total_value, // Map snake to camel
-            totalInvested: row.total_invested, // Map snake to camel
+            totalValue: row.total_value,
+            totalInvested: row.total_invested,
             note: row.note,
             assets: JSON.parse(row.assets).filter(x => x.id !== null)
         }));
         res.json(result);
-    });
+    } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-app.post('/api/snapshots', (req, res) => {
+app.post('/api/snapshots', async (req, res) => {
     const { date, assets, note } = req.body; 
     
-    db.get("SELECT id FROM snapshots WHERE date = ?", [date], (err, row) => {
-        if (err) return res.status(500).json({error: err.message});
-        
-        const snapshotId = row ? row.id : uuidv4();
+    try {
+        const row = await getQuery("SELECT id FROM snapshots WHERE date = ?", [date]);
+        const snapshotId = row.length > 0 ? row[0].id : uuidv4();
         const now = Date.now();
         
         const totalValue = assets.reduce((sum, a) => sum + a.marketValue, 0);
@@ -314,7 +387,7 @@ app.post('/api/snapshots', (req, res) => {
         db.serialize(() => {
             db.run("BEGIN TRANSACTION");
             
-            if (row) {
+            if (row.length > 0) {
                 db.run("UPDATE snapshots SET total_value=?, total_invested=?, note=?, updated_at=? WHERE id=?", 
                     [totalValue, totalInvested, note, now, snapshotId]);
                 db.run("DELETE FROM positions WHERE snapshot_id=?", [snapshotId]);
@@ -350,11 +423,9 @@ app.post('/api/snapshots', (req, res) => {
                 else res.json({ success: true, id: snapshotId });
             });
         });
-    });
+    } catch(e) { res.status(500).json({error: e.message}); }
 });
 
-// --- Catch-All for Frontend Routing (SPA) ---
-// This must be the last route.
 if (fs.existsSync(distPath)) {
     app.get('*', (req, res) => {
         res.sendFile(path.join(distPath, 'index.html'));

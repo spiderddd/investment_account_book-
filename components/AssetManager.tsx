@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  Search, Plus, Trash2, Edit2, Coins, Briefcase, Landmark, TrendingUp, Wallet, X, Save, AlertCircle, ChevronDown, ChevronRight, Clock, History, BarChart2, Eye, EyeOff 
+  Search, Plus, Trash2, Edit2, Coins, Briefcase, Landmark, TrendingUp, Wallet, X, Save, AlertCircle, ChevronDown, Clock, History, BarChart2, Eye, EyeOff 
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, Legend 
@@ -160,7 +160,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
   }, [assets, searchTerm, assetPerformanceMap, showHeldOnly]);
 
   // --- Data Logic: Specific Asset History (For History Modal) ---
-  const selectedAssetHistory = useMemo<AssetHistoryRecord[]>(() => {
+  const selectedAssetHistory: AssetHistoryRecord[] = useMemo(() => {
     if (!viewHistoryId) return [];
     
     return snapshots
@@ -175,7 +175,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
                 totalCost: record.totalCost,
                 profit: record.marketValue - record.totalCost,
                 roi: record.totalCost > 0 ? ((record.marketValue - record.totalCost) / record.totalCost * 100) : 0
-            };
+            } as AssetHistoryRecord;
         })
         .filter((item): item is AssetHistoryRecord => item !== null)
         .sort((a, b) => a.date.localeCompare(b.date));
@@ -407,7 +407,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
         })}
         
         {/* Empty State if all filtered out */}
-        {assets.length > 0 && Array.from(columns.values()).every(list => list.length === 0) && (
+        {assets.length > 0 && Array.from(columns.values()).every((list: Asset[]) => list.length === 0) && (
             <div className="text-center py-20 text-slate-400">
                 <Search size={48} className="mx-auto mb-4 opacity-20" />
                 <p>

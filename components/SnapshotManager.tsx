@@ -7,28 +7,21 @@ import { generateId, StorageService } from '../services/storageService';
 interface SnapshotManagerProps {
   snapshots: SnapshotItem[];
   strategies: StrategyVersion[];
-  assets?: Asset[]; // Global dictionary passed from App
+  assets?: Asset[]; 
   onUpdate: (snapshots: SnapshotItem[]) => void;
   onSave?: (snapshot: SnapshotItem) => void;
   onCreateAsset?: (asset: Partial<Asset>) => Promise<void>;
 }
 
-// Temporary state for editing a row
 interface AssetRowInput {
   recordId: string;
-  assetId?: string; // Link to global asset
+  assetId?: string; 
   strategyId?: string;
-  
-  // Display
   name: string;
   category: AssetCategory;
-  
-  // Inputs
   price: string;
   quantityChange: string; 
   costChange: string; 
-  
-  // Computed preview
   prevQuantity: number;
   prevCost: number;
 }
@@ -44,17 +37,14 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
   const [viewMode, setViewMode] = useState<'list' | 'entry'>('list');
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
   
-  // Form State
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 7));
   const [note, setNote] = useState('');
   const [rows, setRows] = useState<AssetRowInput[]>([]);
   
-  // Asset Creation Modal
   const [isCreatingAsset, setIsCreatingAsset] = useState(false);
   const [newAssetName, setNewAssetName] = useState('');
   const [newAssetType, setNewAssetType] = useState<AssetCategory>('security');
 
-  // List View State
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   
   const sortedSnapshots = [...snapshots].sort((a, b) => b.date.localeCompare(a.date));
@@ -95,16 +85,19 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     } else {
       // New Snapshot Logic
       
-      // 1. Add Strategy Items (Plan)
-      if (activeStrategy) {
-        activeStrategy.items.forEach(item => {
+      // 1. Add Strategy Items (Plan) - UPDATED for Hierarchy
+      if (activeStrategy && activeStrategy.layers) {
+        // Flatten layers to get all targets
+        const allTargets = activeStrategy.layers.flatMap(l => l.items);
+        
+        allTargets.forEach(item => {
           const prevAsset = previousSnapshot?.assets.find(a => a.assetId === item.assetId);
           initialRows.push({
             recordId: generateId(),
             assetId: item.assetId,
             strategyId: item.id, // Link to strategy target
             name: item.targetName,
-            category: 'security', // Default assumption, should lookup asset type really
+            category: 'security', // Should lookup, but default safe
             price: prevAsset ? prevAsset.unitPrice.toString() : '',
             quantityChange: '',
             costChange: '',
@@ -114,10 +107,9 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
         });
       }
 
-      // 2. Add Other Assets carried over (Legacy holdings not in strategy)
+      // 2. Add Other Assets carried over (Legacy)
       if (previousSnapshot) {
         previousSnapshot.assets.forEach(a => {
-          // If not already added via strategy list above
           const alreadyAdded = initialRows.find(r => r.assetId === a.assetId);
           if (!alreadyAdded) {
              initialRows.push({
@@ -148,29 +140,18 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     const newRows = [...rows];
     const row = newRows[index];
     row[field] = value;
-
-    // --- Intelligent Sync for Wealth/Fixed ---
-    // If user inputs "Cost Change" (Deposit Principal), we assume "Quantity Change" (Balance) increases by same amount
-    // unless Quantity is already manually edited.
     if ((row.category === 'fixed' || row.category === 'wealth') && field === 'costChange') {
-        // Only auto-sync if quantity hasn't been touched yet or matches previous principal input
-        // Simple logic: overwrite quantity change to match principal change for convenience
-        // User can manually correct Quantity afterwards if it differs (e.g. fees)
         row.quantityChange = value;
     }
-
     setRows(newRows);
   };
 
-  // Logic to add a NEW row from the global dictionary
   const addAssetRow = (asset: Asset) => {
-    // Check if exists
     if (rows.find(r => r.assetId === asset.id)) {
       alert("该资产已在列表中");
       return;
     }
     
-    // Check previous value
     const prevAsset = previousSnapshot?.assets.find(a => a.assetId === asset.id);
     const isCashLike = asset.type === 'fixed' || asset.type === 'wealth';
     
@@ -202,17 +183,15 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
   const handleSubmit = () => {
     if (onSave) {
         const finalAssets: AssetRecord[] = rows.map(r => {
-        // Wealth and Fixed items ALWAYS have unit price of 1 for simplified bookkeeping
         const price = (r.category === 'fixed' || r.category === 'wealth') ? 1 : (parseFloat(r.price) || 0);
         const qChange = parseFloat(r.quantityChange) || 0;
         const cChange = parseFloat(r.costChange) || 0;
-        
         const newQuantity = r.prevQuantity + qChange;
         const newCost = r.prevCost + cChange;
 
         return {
             id: r.recordId,
-            assetId: r.assetId || generateId(), // Fallback
+            assetId: r.assetId || generateId(),
             strategyId: r.strategyId,
             name: r.name,
             category: r.category,
@@ -234,7 +213,7 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
             assets: finalAssets,
             totalValue: totalVal,
             totalInvested: totalInv,
-            note: note // Save the note
+            note: note
         };
 
         onSave(newSnapshot);
@@ -242,7 +221,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     }
   };
 
-  // --- Quick Asset Creation ---
   const handleCreateNewAsset = async () => {
       if (newAssetName && onCreateAsset) {
           await onCreateAsset({
@@ -261,8 +239,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     setExpandedNotes(newSet);
   };
 
-  // --- Render Helpers ---
-
   const getCategoryIcon = (c: AssetCategory) => {
     switch (c) {
       case 'security': return <TrendingUp size={16} className="text-blue-600"/>;
@@ -275,8 +251,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     }
   };
 
-  // --- View: Entry Form ---
-  
   if (viewMode === 'entry') {
     const totalAssetsVal = rows.reduce((sum, r) => {
        const p = parseFloat(r.price) || (r.category === 'fixed' || r.category === 'wealth' ? 1 : 0);
@@ -284,7 +258,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
        return sum + (p * q);
     }, 0);
     
-    // Filter out assets already in the list to show available ones in dropdown (simplified)
     const availableAssets = assets.filter(a => !rows.find(r => r.assetId === a.id));
 
     return (
@@ -310,7 +283,7 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
             </div>
           </div>
 
-          {/* Config Area: Date, Asset, Note */}
+          {/* Config Area */}
           <div className="p-6 border-b border-slate-100 space-y-4">
              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                <div className="max-w-xs relative">
@@ -334,7 +307,7 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                               const asset = assets.find(a => a.id === e.target.value);
                               if (asset) {
                                   addAssetRow(asset);
-                                  e.target.value = ""; // Reset
+                                  e.target.value = ""; 
                               }
                           }}
                       >
@@ -354,15 +327,14 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                </div>
              </div>
 
-             {/* Markdown Note Section */}
              <div>
                 <label className="flex items-center gap-2 text-xs font-bold text-slate-400 mb-1">
                   <FileText size={14} />
-                  本月投资笔记 (Markdown) - <span className="font-normal opacity-70">记录当月市场观点、操作逻辑或备忘</span>
+                  本月投资笔记 (Markdown)
                 </label>
                 <textarea 
                   className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm font-mono min-h-[100px]"
-                  placeholder="# 本月大事记&#10;- 美联储降息预期增强...&#10;- 增持了黄金..."
+                  placeholder="# 本月大事记..."
                   value={note}
                   onChange={e => setNote(e.target.value)}
                 />
@@ -377,7 +349,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                   <th className="p-4 w-64 sticky left-0 bg-slate-50 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">资产名称</th>
                   <th className="p-4 w-32 text-right">当前单价</th>
                   <th className="p-4 w-40 text-right bg-blue-50/30">本月变动 (份额)</th>
-                  {/* Changed background to Red tint for money input */}
                   <th className="p-4 w-40 text-right bg-rose-50/30">本月流水 (本金)</th>
                   <th className="p-4 w-32 text-right">持有总量</th>
                   <th className="p-4 w-40 text-right">当前市值</th>
@@ -393,10 +364,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                   const currentQ = row.prevQuantity + qChange;
                   const currentVal = currentQ * p;
                   
-                  // Implied Profit Calculation for this specific row action
-                  // For Wealth/Fixed: Profit = (Added Quantity * 1) - Added Principal
-                  // For Security: Profit can't be easily calc'd just from flow, need valuation change.
-                  // But for the user request "Bookkeeping In/Out", showing implied interest for Wealth is helpful.
                   const impliedProfit = isCashLike ? (qChange - cChange) : 0;
 
                   return (
@@ -433,7 +400,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                             </div>
                         )}
                       </td>
-                      {/* Changed input text color to Red for Principal/Cost */}
                       <td className="p-4 bg-rose-50/30">
                          <input 
                            type="number" step="0.01" placeholder="0.00"
@@ -504,8 +470,7 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     );
   }
 
-  // --- View: List ---
-
+  // --- View: List (Unchanged) ---
   return (
     <div className="pb-20">
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
@@ -548,29 +513,18 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                  <div className="flex items-center gap-6">
                     <div className="text-right hidden sm:block">
                        <div className="text-xs text-slate-500">本月净投入</div>
-                       {/* Red for Positive Input (Inflow to investment), Green for Negative (Outflow) */}
                        <div className={`font-medium ${netInput > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                           {netInput > 0 ? '+' : ''}
                           {netInput.toLocaleString()}
                        </div>
                     </div>
                     <div className="flex gap-2">
-                       <button 
-                        onClick={() => initEntryForm(s.id)}
-                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                        title="编辑"
-                       >
-                         <Calendar size={18} />
-                       </button>
-                       {/* Delete in API mode usually requires more checks, kept simple here */}
-                       <button className="p-2 text-slate-300 cursor-not-allowed rounded-lg">
-                         <Trash2 size={18} />
-                       </button>
+                       <button onClick={() => initEntryForm(s.id)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"><Calendar size={18} /></button>
+                       <button className="p-2 text-slate-300 cursor-not-allowed rounded-lg"><Trash2 size={18} /></button>
                     </div>
                  </div>
               </div>
               
-              {/* Assets Preview */}
               <div className="px-4 py-3 border-b border-slate-50 flex gap-2 overflow-x-auto no-scrollbar">
                  {s.assets.slice(0, 5).map(a => (
                    <div key={a.id} className="text-xs px-2 py-1 bg-slate-50 rounded border border-slate-100 whitespace-nowrap text-slate-600 flex items-center gap-1">
@@ -581,18 +535,13 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                  {s.assets.length > 5 && <span className="text-xs text-slate-400 self-center">+{s.assets.length - 5} 更多</span>}
               </div>
 
-              {/* Note Display Section */}
               {s.note ? (
                  <div className="px-4 py-2 bg-yellow-50/30">
-                   <button 
-                     onClick={() => toggleNote(s.id)}
-                     className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-700 w-full"
-                   >
+                   <button onClick={() => toggleNote(s.id)} className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-700 w-full">
                      {expandedNotes.has(s.id) ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                      <span>投资笔记</span>
                      {!expandedNotes.has(s.id) && <span className="text-slate-400 font-normal truncate max-w-[200px] ml-2">{s.note}</span>}
                    </button>
-                   
                    {expandedNotes.has(s.id) && (
                      <div className="mt-2 text-sm text-slate-700 prose prose-sm max-w-none prose-p:my-1">
                         <ReactMarkdown>{s.note}</ReactMarkdown>
@@ -600,11 +549,8 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                    )}
                  </div>
               ) : (
-                <div className="px-4 py-1">
-                  <span className="text-[10px] text-slate-300 italic">本月未留笔记</span>
-                </div>
+                <div className="px-4 py-1"><span className="text-[10px] text-slate-300 italic">本月未留笔记</span></div>
               )}
-
             </div>
           )})
         )}
