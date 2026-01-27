@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Plus, Trash2, Edit2, AlertCircle, History, Copy, Calendar, BookOpen, Save, X, Layers, Layout, Calculator } from 'lucide-react';
 import { StrategyVersion, StrategyLayer, StrategyTarget, Asset } from '../types';
@@ -202,6 +202,28 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
 
   const totalLayerWeight = currentVersion ? currentVersion.layers.reduce((sum, l) => sum + l.weight, 0) : 0;
 
+  // --- Derived State: Available Assets for Modal ---
+  // Calculate which assets are already used in this strategy version
+  const availableAssetsForModal = useMemo(() => {
+    if (!currentVersion || !modalAsset.isOpen) return [];
+
+    const usedAssetIds = new Set<string>();
+    currentVersion.layers.forEach(layer => {
+        layer.items.forEach(item => {
+            usedAssetIds.add(item.assetId);
+        });
+    });
+
+    return assets.filter(asset => {
+        // If the asset is used, exclude it.
+        // UNLESS we are currently editing the item that uses this asset (so we don't hide the current selection)
+        const isUsed = usedAssetIds.has(asset.id);
+        const isSelf = modalAsset.item && modalAsset.item.assetId === asset.id;
+        return !isUsed || isSelf;
+    });
+  }, [assets, currentVersion, modalAsset.isOpen, modalAsset.item]);
+
+
   if (versions.length === 0) {
       return <div className="p-10 text-center"><button onClick={handleCreateNewVersion} className="bg-blue-600 text-white px-6 py-2 rounded">初始化策略</button></div>;
   }
@@ -396,8 +418,11 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
                         <label className="block text-xs font-bold text-slate-500 mb-1">选择资产</label>
                         <select required className="w-full border rounded px-3 py-2 bg-white" value={modalAsset.assetId} onChange={e => setModalAsset({...modalAsset, assetId: e.target.value})}>
                             <option value="">-- 请选择 --</option>
-                            {assets.map(a => <option key={a.id} value={a.id}>{a.name} ({a.type})</option>)}
+                            {availableAssetsForModal.map(a => <option key={a.id} value={a.id}>{a.name} ({a.type})</option>)}
                         </select>
+                        {availableAssetsForModal.length === 0 && !modalAsset.item && (
+                            <p className="text-xs text-amber-500 mt-1">注意：所有现有资产已分配完毕。</p>
+                        )}
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-slate-500 mb-1">层内占比 (%)</label>

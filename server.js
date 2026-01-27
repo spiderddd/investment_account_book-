@@ -27,7 +27,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)){
     fs.mkdirSync(DATA_DIR);
 }
-const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'invest_track_v2.db'); // Changed DB name to force fresh start or migration manually
+const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, 'invest_track_v2.db');
 
 app.use(cors());
 app.use(express.json());
@@ -110,6 +110,9 @@ CREATE TABLE IF NOT EXISTS positions (
 `;
 
 db.serialize(() => {
+    // CRITICAL: Enable Foreign Keys for Cascade Delete to work
+    db.run("PRAGMA foreign_keys = ON");
+    
     db.exec(initSql, (err) => {
         if (err) console.error("DB Init Error:", err);
         else console.log("Database initialized successfully (Schema V2) at", DB_PATH);
@@ -234,7 +237,9 @@ app.post('/api/strategies', async (req, res) => {
         
         // 1. Insert Version
         db.run("INSERT INTO strategy_versions (id, name, description, start_date, created_at) VALUES (?, ?, ?, ?, ?)",
-            [versionId, name, description, startDate, now]);
+            [versionId, name, description, startDate, now], (err) => {
+                if (err) console.error("Insert Version Error", err);
+            });
             
         // 2. Insert Layers & Targets
         if (layers && layers.length > 0) {
@@ -243,7 +248,9 @@ app.post('/api/strategies', async (req, res) => {
             
             layers.forEach((layer, lIdx) => {
                 const layerId = uuidv4();
-                layerStmt.run(layerId, versionId, layer.name, layer.weight, layer.description || '', lIdx);
+                layerStmt.run(layerId, versionId, layer.name, layer.weight, layer.description || '', lIdx, (err) => {
+                    if (err) console.error("Insert Layer Error", err);
+                });
                 
                 if (layer.items && layer.items.length > 0) {
                     layer.items.forEach((item, tIdx) => {
@@ -255,7 +262,10 @@ app.post('/api/strategies', async (req, res) => {
                             item.weight, 
                             item.color, 
                             item.note || '',
-                            tIdx
+                            tIdx,
+                            (err) => {
+                                if (err) console.error("Insert Target Error", err);
+                            }
                         );
                     });
                 }
@@ -282,40 +292,44 @@ app.put('/api/strategies/:id', (req, res) => {
         db.run("UPDATE strategy_versions SET name=?, description=?, start_date=?, status=? WHERE id=?",
             [name, description, startDate, status, id]);
 
-        // 2. Cascade Delete Old Hierarchy (Since we are replacing structure)
-        // Note: SQLite FK ON DELETE CASCADE handles targets if we delete layers.
-        // But first we must find layers to delete.
-        // Actually, easier to delete from strategy_layers where version_id = id.
-        db.run("DELETE FROM strategy_layers WHERE version_id=?", [id], (err) => {
-             // 3. Re-insert Layers & Targets
-            if (layers && layers.length > 0) {
-                const layerStmt = db.prepare("INSERT INTO strategy_layers (id, version_id, name, weight, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)");
-                const targetStmt = db.prepare("INSERT INTO strategy_targets (id, layer_id, asset_id, target_name, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                
-                layers.forEach((layer, lIdx) => {
-                    // Use existing ID if provided (to try and keep stability) or new one
-                    const layerId = layer.id || uuidv4(); 
-                    layerStmt.run(layerId, id, layer.name, layer.weight, layer.description || '', lIdx);
-                    
-                    if (layer.items && layer.items.length > 0) {
-                        layer.items.forEach((item, tIdx) => {
-                            targetStmt.run(
-                                item.id || uuidv4(), 
-                                layerId, 
-                                item.assetId, 
-                                item.targetName, 
-                                item.weight, 
-                                item.color, 
-                                item.note || '',
-                                tIdx
-                            );
-                        });
-                    }
+        // 2. Clear old hierarchy
+        // SAFETY: Explicitly delete targets first to ensure no constraint violations if FKs aren't active (though we enabled them)
+        db.run("DELETE FROM strategy_targets WHERE layer_id IN (SELECT id FROM strategy_layers WHERE version_id=?)", [id]);
+        db.run("DELETE FROM strategy_layers WHERE version_id=?", [id]);
+        
+        // 3. Re-insert Layers & Targets
+        if (layers && layers.length > 0) {
+            const layerStmt = db.prepare("INSERT INTO strategy_layers (id, version_id, name, weight, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)");
+            const targetStmt = db.prepare("INSERT INTO strategy_targets (id, layer_id, asset_id, target_name, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            
+            layers.forEach((layer, lIdx) => {
+                // Use existing ID if provided (to try and keep stability) or new one
+                const layerId = layer.id || uuidv4(); 
+                layerStmt.run(layerId, id, layer.name, layer.weight, layer.description || '', lIdx, (err) => {
+                    if (err) console.error("Insert Layer Error", err);
                 });
-                layerStmt.finalize();
-                targetStmt.finalize();
-            }
-        });
+                
+                if (layer.items && layer.items.length > 0) {
+                    layer.items.forEach((item, tIdx) => {
+                        targetStmt.run(
+                            item.id || uuidv4(), 
+                            layerId, 
+                            item.assetId, 
+                            item.targetName, 
+                            item.weight, 
+                            item.color, 
+                            item.note || '',
+                            tIdx,
+                            (err) => {
+                                if (err) console.error("Insert Target Error", err);
+                            }
+                        );
+                    });
+                }
+            });
+            layerStmt.finalize();
+            targetStmt.finalize();
+        }
 
         db.run("COMMIT", (err) => {
             if (err) res.status(500).json({error: err.message});
