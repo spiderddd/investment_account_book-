@@ -35,6 +35,16 @@ interface AssetPerformance {
   isHistorical: boolean; // True if this is from a past snapshot
 }
 
+interface AssetHistoryRecord {
+  date: string;
+  unitPrice: number;
+  quantity: number;
+  marketValue: number;
+  totalCost: number;
+  profit: number;
+  roi: number;
+}
+
 export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, onUpdate, onCreate, onEdit, onDelete }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showHeldOnly, setShowHeldOnly] = useState(false);
@@ -150,7 +160,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
   }, [assets, searchTerm, assetPerformanceMap, showHeldOnly]);
 
   // --- Data Logic: Specific Asset History (For History Modal) ---
-  const selectedAssetHistory = useMemo(() => {
+  const selectedAssetHistory = useMemo<AssetHistoryRecord[]>(() => {
     if (!viewHistoryId) return [];
     
     return snapshots
@@ -167,8 +177,8 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
                 roi: record.totalCost > 0 ? ((record.marketValue - record.totalCost) / record.totalCost * 100) : 0
             };
         })
-        .filter(item => item !== null)
-        .sort((a, b) => a!.date.localeCompare(b!.date));
+        .filter((item): item is AssetHistoryRecord => item !== null)
+        .sort((a, b) => a.date.localeCompare(b.date));
   }, [snapshots, viewHistoryId]);
 
   // --- Handlers ---
@@ -590,14 +600,14 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, o
                                     </thead>
                                     <tbody className="divide-y divide-slate-100">
                                         {[...selectedAssetHistory].reverse().map((row) => (
-                                            <tr key={row!.date} className="hover:bg-slate-50">
-                                                <td className="px-4 py-3 font-medium text-slate-700">{row!.date}</td>
-                                                <td className="px-4 py-3 text-right">{row!.unitPrice.toLocaleString()}</td>
-                                                <td className="px-4 py-3 text-right">{row!.quantity.toLocaleString()}</td>
-                                                <td className="px-4 py-3 text-right text-slate-500">¥{row!.totalCost.toLocaleString()}</td>
-                                                <td className="px-4 py-3 text-right font-bold text-slate-800">¥{row!.marketValue.toLocaleString()}</td>
-                                                <td className={`px-4 py-3 text-right font-medium ${row!.profit >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                                    {row!.profit >= 0 ? '+' : ''}{row!.profit.toLocaleString()}
+                                            <tr key={row.date} className="hover:bg-slate-50">
+                                                <td className="px-4 py-3 font-medium text-slate-700">{row.date}</td>
+                                                <td className="px-4 py-3 text-right">{row.unitPrice.toLocaleString()}</td>
+                                                <td className="px-4 py-3 text-right">{row.quantity.toLocaleString()}</td>
+                                                <td className="px-4 py-3 text-right text-slate-500">¥{row.totalCost.toLocaleString()}</td>
+                                                <td className="px-4 py-3 text-right font-bold text-slate-800">¥{row.marketValue.toLocaleString()}</td>
+                                                <td className={`px-4 py-3 text-right font-medium ${row.profit >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                    {row.profit >= 0 ? '+' : ''}{row.profit.toLocaleString()}
                                                 </td>
                                             </tr>
                                         ))}
