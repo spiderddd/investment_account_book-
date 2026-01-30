@@ -120,6 +120,11 @@ db.serialize(() => {
             // Migration: Attempt to add note column if it doesn't exist
             // SQLite does not support IF NOT EXISTS in ADD COLUMN, so we ignore error if column exists
             db.run("ALTER TABLE assets ADD COLUMN note TEXT", () => {});
+
+            // Migration: Ensure positions table has the new flow columns (for existing V1 DBs)
+            db.run("ALTER TABLE positions ADD COLUMN added_quantity REAL DEFAULT 0", () => {});
+            db.run("ALTER TABLE positions ADD COLUMN added_principal REAL DEFAULT 0", () => {});
+            
             console.log("Database initialized successfully (Schema V2) at", DB_PATH);
         }
     });

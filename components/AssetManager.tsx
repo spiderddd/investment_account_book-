@@ -46,6 +46,8 @@ interface AssetHistoryRecord {
   totalCost: number;
   profit: number;
   roi: number;
+  addedQuantity: number;
+  addedPrincipal: number;
 }
 
 interface DisplaySection {
@@ -280,8 +282,10 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                 marketValue: acc.marketValue + curr.marketValue,
                 totalCost: acc.totalCost + curr.totalCost,
                 // Unit price is tricky when aggregated, take weighted avg or just first (assuming same price)
-                unitPrice: curr.unitPrice 
-            }), { quantity: 0, marketValue: 0, totalCost: 0, unitPrice: 0 });
+                unitPrice: curr.unitPrice,
+                addedQuantity: acc.addedQuantity + curr.addedQuantity,
+                addedPrincipal: acc.addedPrincipal + curr.addedPrincipal
+            }), { quantity: 0, marketValue: 0, totalCost: 0, unitPrice: 0, addedQuantity: 0, addedPrincipal: 0 });
 
             if (agg.quantity === 0 && agg.marketValue === 0) return null;
 
@@ -292,7 +296,9 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                 marketValue: agg.marketValue,
                 totalCost: agg.totalCost,
                 profit: agg.marketValue - agg.totalCost,
-                roi: agg.totalCost > 0 ? ((agg.marketValue - agg.totalCost) / agg.totalCost * 100) : 0
+                roi: agg.totalCost > 0 ? ((agg.marketValue - agg.totalCost) / agg.totalCost * 100) : 0,
+                addedQuantity: agg.addedQuantity,
+                addedPrincipal: agg.addedPrincipal
             } as AssetHistoryRecord;
         })
         .filter((item): item is AssetHistoryRecord => item !== null)
@@ -743,6 +749,8 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                                     <thead className="bg-slate-50 text-slate-500 uppercase text-xs">
                                         <tr>
                                             <th className="px-4 py-3">日期</th>
+                                            <th className="px-4 py-3 text-right">变动(份额)</th>
+                                            <th className="px-4 py-3 text-right">流水(本金)</th>
                                             <th className="px-4 py-3 text-right">单价</th>
                                             <th className="px-4 py-3 text-right">持仓量</th>
                                             <th className="px-4 py-3 text-right">总成本</th>
@@ -754,6 +762,20 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                                         {[...selectedAssetHistory].reverse().map((row) => (
                                             <tr key={row.date} className="hover:bg-slate-50">
                                                 <td className="px-4 py-3 font-medium text-slate-700">{row.date}</td>
+                                                <td className="px-4 py-3 text-right">
+                                                    {row.addedQuantity !== 0 ? (
+                                                        <span className={row.addedQuantity > 0 ? 'text-rose-600' : 'text-emerald-600'}>
+                                                            {row.addedQuantity > 0 ? '+' : ''}{row.addedQuantity.toLocaleString()}
+                                                        </span>
+                                                    ) : '-'}
+                                                </td>
+                                                <td className="px-4 py-3 text-right">
+                                                    {row.addedPrincipal !== 0 ? (
+                                                         <span className={row.addedPrincipal > 0 ? 'text-rose-600' : 'text-emerald-600'}>
+                                                            {row.addedPrincipal > 0 ? '+' : ''}{row.addedPrincipal.toLocaleString()}
+                                                        </span>
+                                                    ) : '-'}
+                                                </td>
                                                 <td className="px-4 py-3 text-right">{row.unitPrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
                                                 <td className="px-4 py-3 text-right">{row.quantity.toLocaleString()}</td>
                                                 <td className="px-4 py-3 text-right text-slate-500">¥{row.totalCost.toLocaleString()}</td>
