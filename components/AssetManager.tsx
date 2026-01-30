@@ -72,6 +72,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
   const [formName, setFormName] = useState('');
   const [formType, setFormType] = useState<AssetCategory>('security');
   const [formTicker, setFormTicker] = useState('');
+  const [formNote, setFormNote] = useState('');
 
   // History View Modal State
   const [viewHistoryId, setViewHistoryId] = useState<string | null>(null);
@@ -305,11 +306,13 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
       setFormName(asset.name);
       setFormType(asset.type);
       setFormTicker(asset.ticker || '');
+      setFormNote(asset.note || '');
     } else {
       setEditingId(null);
       setFormName('');
       setFormType('security');
       setFormTicker('');
+      setFormNote('');
     }
     setIsEditModalOpen(true);
   };
@@ -318,7 +321,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
     e.preventDefault();
     if (!formName.trim()) return;
 
-    const payload = { name: formName, type: formType, ticker: formTicker };
+    const payload = { name: formName, type: formType, ticker: formTicker, note: formNote };
     if (editingId) await onEdit(editingId, payload);
     else await onCreate(payload);
     
@@ -605,10 +608,19 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                    <label className="block text-xs font-bold text-slate-500 mb-1">资产名称 (必填)</label>
                    <input className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" value={formName} onChange={e => setFormName(e.target.value)} required />
                 </div>
+                
+                {['security', 'fund', 'wealth'].includes(formType) && (
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1">资产代码 (Ticker)</label>
+                        <input className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none font-mono" value={formTicker} onChange={e => setFormTicker(e.target.value)} placeholder="如: 00700.HK" />
+                    </div>
+                )}
+                
                 <div>
-                   <label className="block text-xs font-bold text-slate-500 mb-1">代码 / 备注 (选填)</label>
-                   <input className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" value={formTicker} onChange={e => setFormTicker(e.target.value)} />
+                   <label className="block text-xs font-bold text-slate-500 mb-1">备注 (选填)</label>
+                   <textarea className="w-full px-3 py-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm resize-none h-20" value={formNote} onChange={e => setFormNote(e.target.value)} placeholder="资产备注信息..." />
                 </div>
+                
                 <div className="pt-4 flex gap-3">
                    <button type="button" onClick={() => setIsEditModalOpen(false)} className="flex-1 px-4 py-2 border rounded-lg hover:bg-slate-50">取消</button>
                    <button type="submit" className="flex-1 px-4 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 flex items-center justify-center gap-2"><Save size={18} /> 保存</button>

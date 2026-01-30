@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS assets (
     type TEXT NOT NULL,
     name TEXT NOT NULL,
     ticker TEXT,
+    note TEXT,
     created_at INTEGER
 );
 
@@ -115,7 +116,12 @@ db.serialize(() => {
     
     db.exec(initSql, (err) => {
         if (err) console.error("DB Init Error:", err);
-        else console.log("Database initialized successfully (Schema V2) at", DB_PATH);
+        else {
+            // Migration: Attempt to add note column if it doesn't exist
+            // SQLite does not support IF NOT EXISTS in ADD COLUMN, so we ignore error if column exists
+            db.run("ALTER TABLE assets ADD COLUMN note TEXT", () => {});
+            console.log("Database initialized successfully (Schema V2) at", DB_PATH);
+        }
     });
 });
 
@@ -145,19 +151,19 @@ app.get('/api/assets', async (req, res) => {
 });
 
 app.post('/api/assets', async (req, res) => {
-    const { name, type, ticker } = req.body;
+    const { name, type, ticker, note } = req.body;
     const id = uuidv4();
     const now = Date.now();
     try {
-        await runQuery("INSERT INTO assets (id, type, name, ticker, created_at) VALUES (?, ?, ?, ?, ?)", [id, type, name, ticker, now]);
-        res.json({ id, name, type, ticker, created_at: now });
+        await runQuery("INSERT INTO assets (id, type, name, ticker, note, created_at) VALUES (?, ?, ?, ?, ?, ?)", [id, type, name, ticker, note, now]);
+        res.json({ id, name, type, ticker, note, created_at: now });
     } catch (e) { res.status(500).json({error: e.message}); }
 });
 
 app.put('/api/assets/:id', async (req, res) => {
-    const { name, type, ticker } = req.body;
+    const { name, type, ticker, note } = req.body;
     try {
-        await runQuery("UPDATE assets SET name = ?, type = ?, ticker = ? WHERE id = ?", [name, type, ticker, req.params.id]);
+        await runQuery("UPDATE assets SET name = ?, type = ?, ticker = ?, note = ? WHERE id = ?", [name, type, ticker, note, req.params.id]);
         res.json({ success: true, id: req.params.id });
     } catch (e) { res.status(500).json({error: e.message}); }
 });

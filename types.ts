@@ -6,6 +6,7 @@ export interface Asset {
   type: AssetCategory;
   name: string;
   ticker?: string;
+  note?: string;
 }
 
 // --- New Strategy Hierarchy ---
