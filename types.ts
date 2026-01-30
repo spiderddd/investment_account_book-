@@ -1,3 +1,4 @@
+
 // Asset Definitions (Global Dictionary)
 export type AssetCategory = 'security' | 'fund' | 'wealth' | 'gold' | 'fixed' | 'crypto' | 'other';
 
@@ -50,7 +51,7 @@ export interface AssetRecord {
   // De-normalized info for UI convenience
   name: string;
   category: AssetCategory;
-  strategyId?: string; 
+  // strategyId removed: Mapped dynamically in UI based on Asset ID
   
   // State
   unitPrice: number;

@@ -1,3 +1,4 @@
+
 /**
  * InvestTrack NAS Server
  * 
@@ -98,7 +99,7 @@ CREATE TABLE IF NOT EXISTS positions (
     id TEXT PRIMARY KEY,
     snapshot_id TEXT NOT NULL,
     asset_id TEXT NOT NULL,
-    strategy_id TEXT,
+    -- strategy_id REMOVED: Decoupled from physical holdings
     quantity REAL NOT NULL,
     price REAL NOT NULL,
     -- market_value REMOVED: Calculated on fly (quantity * price)
@@ -118,10 +119,7 @@ db.serialize(() => {
         if (err) console.error("DB Init Error:", err);
         else {
             // Migration: Attempt to add note column if it doesn't exist
-            // SQLite does not support IF NOT EXISTS in ADD COLUMN, so we ignore error if column exists
             db.run("ALTER TABLE assets ADD COLUMN note TEXT", () => {});
-
-            // Migration: Ensure positions table has the new flow columns (for existing V1 DBs)
             db.run("ALTER TABLE positions ADD COLUMN added_quantity REAL DEFAULT 0", () => {});
             db.run("ALTER TABLE positions ADD COLUMN added_principal REAL DEFAULT 0", () => {});
             
@@ -247,13 +245,12 @@ app.get('/api/strategies', async (req, res) => {
                 id: v.id,
                 name: v.name,
                 description: v.description,
-                startDate: v.start_date, // snake_case -> camelCase manual mapping if needed, but DB is start_date. Frontend expects startDate
+                startDate: v.start_date, 
                 status: v.status,
                 layers: vLayers
             };
         });
         
-        // Map DB snake_case to CamelCase where simple mapping didn't handle it
         const finalResult = result.map(r => ({
             ...r,
             startDate: r.startDate
@@ -339,7 +336,6 @@ app.put('/api/strategies/:id', (req, res) => {
             const targetStmt = db.prepare("INSERT INTO strategy_targets (id, layer_id, asset_id, target_name, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
             
             layers.forEach((layer, lIdx) => {
-                // Use existing ID if provided (to try and keep stability) or new one
                 const layerId = layer.id || uuidv4(); 
                 layerStmt.run(layerId, id, layer.name, layer.weight, layer.description || '', lIdx, (err) => {
                     if (err) console.error("Insert Layer Error", err);
@@ -381,10 +377,9 @@ app.delete('/api/strategies/:id', async (req, res) => {
     } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-// 3. Snapshots (Positions table needs minimal change, strategy_id might need to be linked to targets)
-// Note: strategy_id in positions usually refers to a specific target rule.
+// 3. Snapshots 
 app.get('/api/snapshots', async (req, res) => {
-    // UPDATED SQL: Calculate market_value on the fly (quantity * price)
+    // UPDATED SQL: Remove strategy_id from selection
     const sql = `
         SELECT 
             s.*,
@@ -392,7 +387,6 @@ app.get('/api/snapshots', async (req, res) => {
                 json_object(
                     'id', p.id,
                     'assetId', p.asset_id,
-                    'strategyId', p.strategy_id,
                     'name', a.name,
                     'category', a.type,
                     'unitPrice', p.price,
@@ -448,11 +442,11 @@ app.post('/api/snapshots', async (req, res) => {
                     [snapshotId, date, totalValue, totalInvested, note, now]);
             }
 
-            // UPDATED: Removed market_value from INSERT
+            // UPDATED: Removed strategy_id from INSERT
             const stmt = db.prepare(`
                 INSERT INTO positions 
-                (id, snapshot_id, asset_id, strategy_id, quantity, price, total_cost, added_quantity, added_principal) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, snapshot_id, asset_id, quantity, price, total_cost, added_quantity, added_principal) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `);
             
             assets.forEach(a => {
@@ -460,10 +454,8 @@ app.post('/api/snapshots', async (req, res) => {
                     uuidv4(), 
                     snapshotId, 
                     a.assetId || a.id, 
-                    a.strategyId || null, 
                     a.quantity, 
                     a.unitPrice, 
-                    // a.marketValue is implicitly ignored here
                     a.totalCost, 
                     a.addedQuantity, 
                     a.addedPrincipal

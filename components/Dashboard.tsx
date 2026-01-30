@@ -1,10 +1,11 @@
+
 import React, { useMemo, useState } from 'react';
 import { 
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend 
 } from 'recharts';
 import { TrendingUp, DollarSign, Activity, Wallet, History, Calendar, Filter, ArrowRight, ChevronRight, ArrowLeft, Layers, CornerDownRight } from 'lucide-react';
-import { StrategyVersion, SnapshotItem } from '../types';
+import { StrategyVersion, SnapshotItem, StrategyTarget } from '../types';
 import { StorageService } from '../services/storageService';
 
 interface DashboardProps {
@@ -66,13 +67,37 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
     return { startSnapshot: baseline, endSnapshot: end };
   }, [sortedAllSnapshots, filteredSnapshots, timeRange]);
 
+  // --- Strategy Mapping Helper ---
+  // Create a Map: AssetID -> StrategyTarget for the given strategy version
+  const getAssetTargetMap = (strategy: StrategyVersion | null) => {
+      const map = new Map<string, { target: StrategyTarget, layerId: string }>();
+      if (!strategy) return map;
+      strategy.layers.forEach(layer => {
+          layer.items.forEach(target => {
+              map.set(target.assetId, { target, layerId: layer.id });
+          });
+      });
+      return map;
+  };
+
+  const activeStrategyEnd = useMemo(() => {
+      if (!endSnapshot) return null;
+      return StorageService.getStrategyForDate(versions, endSnapshot.date);
+  }, [versions, endSnapshot]);
+
+  const assetTargetMapEnd = useMemo(() => getAssetTargetMap(activeStrategyEnd), [activeStrategyEnd]);
+
   const getSnapshotMetrics = (s: SnapshotItem | null) => {
     if (!s) return { value: 0, invested: 0 };
     if (viewMode === 'total') {
       return { value: s.totalValue, invested: s.totalInvested };
     } else {
-      const value = s.assets.filter(a => a.strategyId).reduce((sum, a) => sum + a.marketValue, 0);
-      const invested = s.assets.filter(a => a.strategyId).reduce((sum, a) => sum + a.totalCost, 0);
+      // DYNAMIC CALCULATION: Only sum assets that exist in the active strategy for THIS snapshot
+      const strat = StorageService.getStrategyForDate(versions, s.date);
+      const map = getAssetTargetMap(strat);
+      
+      const value = s.assets.filter(a => map.has(a.assetId)).reduce((sum, a) => sum + a.marketValue, 0);
+      const invested = s.assets.filter(a => map.has(a.assetId)).reduce((sum, a) => sum + a.totalCost, 0);
       return { value, invested };
     }
   };
@@ -86,36 +111,31 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
     : (endMetrics.value - endMetrics.invested) - (startMetrics.value - startMetrics.invested);
   const returnRate = displayInvested > 0 ? (periodProfit / displayInvested) * 100 : 0;
 
-  // --- Strategy Context ---
-  const appliedStrategy = useMemo(() => {
-    if (!endSnapshot) return null;
-    return StorageService.getStrategyForDate(versions, endSnapshot.date);
-  }, [versions, endSnapshot]);
-
   const selectedLayerInfo = useMemo(() => {
-    if (!appliedStrategy || !selectedLayerId) return null;
-    return appliedStrategy.layers.find(l => l.id === selectedLayerId);
-  }, [appliedStrategy, selectedLayerId]);
+    if (!activeStrategyEnd || !selectedLayerId) return null;
+    return activeStrategyEnd.layers.find(l => l.id === selectedLayerId);
+  }, [activeStrategyEnd, selectedLayerId]);
 
   // --- Chart Data Calculation ---
   const allocationData = useMemo(() => {
     if (!endSnapshot) return [];
     
     if (viewMode === 'strategy') {
-      if (!appliedStrategy) return [];
+      if (!activeStrategyEnd) return [];
       const stratTotal = endMetrics.value; 
-
-      // Build Map: StrategyTargetID -> Market Value
-      const actualMap = new Map<string, number>();
-      endSnapshot.assets.forEach(a => {
-        if (a.strategyId) actualMap.set(a.strategyId, a.marketValue);
-      });
 
       if (selectedLayerId === null) {
           // --- Level 1: Layer View (Root) ---
-          return appliedStrategy.layers.map((layer, idx) => {
-              // Sum up all assets in this layer
-              const layerActualValue = layer.items.reduce((sum, item) => sum + (actualMap.get(item.id) || 0), 0);
+          return activeStrategyEnd.layers.map((layer, idx) => {
+              // Sum up assets in snapshot that belong to this layer
+              const layerActualValue = endSnapshot.assets.reduce((sum, asset) => {
+                  const mapping = assetTargetMapEnd.get(asset.assetId);
+                  if (mapping && mapping.layerId === layer.id) {
+                      return sum + asset.marketValue;
+                  }
+                  return sum;
+              }, 0);
+
               const actualPercent = stratTotal > 0 ? (layerActualValue / stratTotal) * 100 : 0;
               
               return {
@@ -132,11 +152,17 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
 
       } else {
           // --- Level 2: Asset View (Drill Down) ---
-          const layer = appliedStrategy.layers.find(l => l.id === selectedLayerId);
+          const layer = activeStrategyEnd.layers.find(l => l.id === selectedLayerId);
           if (!layer) return [];
 
-          // Calculate Layer Total Value (for internal percentage context)
-          const layerTotalValue = layer.items.reduce((sum, item) => sum + (actualMap.get(item.id) || 0), 0);
+          // Helper: Get actual value of a target in current snapshot
+          const getTargetActualValue = (target: StrategyTarget) => {
+              // Note: There could be multiple records for one assetId (though unlikely in V2), so we filter and sum
+              const assets = endSnapshot.assets.filter(a => a.assetId === target.assetId);
+              return assets.reduce((sum, a) => sum + a.marketValue, 0);
+          };
+
+          const layerTotalValue = layer.items.reduce((sum, t) => sum + getTargetActualValue(t), 0);
           
           // Calculate Auto Weights logic for this layer
           const fixedItems = layer.items.filter(t => t.weight >= 0);
@@ -146,7 +172,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
           const calculatedAutoWeight = autoItems.length > 0 ? (remainingWeight / autoItems.length) : 0;
 
           return layer.items.map(t => {
-            const actualValue = actualMap.get(t.id) || 0;
+            const actualValue = getTargetActualValue(t);
             // Internal Percentage: % of the Layer's total value
             const actualInnerPercent = layerTotalValue > 0 ? (actualValue / layerTotalValue) * 100 : 0;
             const targetInnerPercent = t.weight === -1 ? calculatedAutoWeight : t.weight;
@@ -185,14 +211,17 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
         color: CATEGORY_COLORS[key] || '#cbd5e1'
       })).sort((a, b) => b.value - a.value);
     }
-  }, [appliedStrategy, endSnapshot, endMetrics, viewMode, selectedLayerId]);
+  }, [activeStrategyEnd, endSnapshot, endMetrics, viewMode, selectedLayerId, assetTargetMapEnd]);
 
   const historyData = useMemo(() => {
     // Determine scope of assets to include in history
     let targetAssetIds: Set<string> | null = null;
     
-    if (viewMode === 'strategy' && selectedLayerId && appliedStrategy) {
-       const layer = appliedStrategy.layers.find(l => l.id === selectedLayerId);
+    // For historical Strategy View, we must determine which assets belonged to the SELECTED Layer *AT THAT TIME*?
+    // OR, simpler: just use the *Current* Active Strategy's definition of that layer?
+    // Using current strategy definition is standard for "Backtesting" logic.
+    if (viewMode === 'strategy' && selectedLayerId && activeStrategyEnd) {
+       const layer = activeStrategyEnd.layers.find(l => l.id === selectedLayerId);
        if (layer) {
            targetAssetIds = new Set(layer.items.map(i => i.assetId));
        }
@@ -203,14 +232,19 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
       let inv = 0;
       
       if (viewMode === 'strategy') {
+          // For strategy history, we dynamically calculate based on the strategy active AT THAT TIME
+          const stratAtTime = StorageService.getStrategyForDate(versions, s.date);
+          const mapAtTime = getAssetTargetMap(stratAtTime);
+
           if (targetAssetIds) {
-              // History for specific Layer (proxy by current assets in that layer)
-              const assets = s.assets.filter(a => targetAssetIds!.has(a.assetId));
+              // If filtering by Layer, we check if the asset matches the Current Selected Layer Assets
+              // Limitation: If assets moved between layers in history, this strictly follows "Current Layer Composition"
+              const assets = s.assets.filter(a => targetAssetIds!.has(a.assetId) && mapAtTime.has(a.assetId));
               val = assets.reduce((sum, a) => sum + a.marketValue, 0);
               inv = assets.reduce((sum, a) => sum + a.totalCost, 0);
           } else {
-              // History for Total Strategy
-              const assets = s.assets.filter(a => a.strategyId);
+              // Total Strategy History (Dynamic)
+              const assets = s.assets.filter(a => mapAtTime.has(a.assetId));
               val = assets.reduce((sum, a) => sum + a.marketValue, 0);
               inv = assets.reduce((sum, a) => sum + a.totalCost, 0);
           }
@@ -226,14 +260,14 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
         invested: inv
       };
     });
-  }, [filteredSnapshots, viewMode, selectedLayerId, appliedStrategy]);
+  }, [filteredSnapshots, viewMode, selectedLayerId, activeStrategyEnd, versions]);
 
   // --- Breakdown Table Data ---
   const breakdownData = useMemo(() => {
     if (!endSnapshot) return [];
-    if (viewMode === 'strategy' && !appliedStrategy) return [];
+    if (viewMode === 'strategy' && !activeStrategyEnd) return [];
 
-    const startSnap = startSnapshot; // null if all time or first record
+    const startSnap = startSnapshot; 
     
     // Helper to get stats for a list of Asset IDs
     const getStats = (s: SnapshotItem | null, assetIds: Set<string>) => {
@@ -290,7 +324,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
 
     } else if (selectedLayerId) {
         // --- Strategy View: ASSETS Breakdown (Drill Down) ---
-        const layer = appliedStrategy!.layers.find(l => l.id === selectedLayerId);
+        const layer = activeStrategyEnd!.layers.find(l => l.id === selectedLayerId);
         if (!layer) return [];
         
         return layer.items.map(item => {
@@ -303,7 +337,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
                 name: item.targetName,
                 color: item.color,
                 endVal: end.v,
-                endCost: end.c, // Needed for ROI
+                endCost: end.c, 
                 changeVal: end.v - start.v,
                 changeInput: end.c - start.c,
                 profit: (end.v - end.c) - (start.v - start.c)
@@ -311,7 +345,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
         }).sort((a,b) => b.endVal - a.endVal);
     } else {
         // --- Strategy View: LAYERS Breakdown (Top Level) ---
-        return appliedStrategy!.layers.map((layer, idx) => {
+        return activeStrategyEnd!.layers.map((layer, idx) => {
             const assetIds = new Set<string>(layer.items.map(i => i.assetId));
             const end = getStats(endSnapshot, assetIds);
             const start = getStats(startSnap, assetIds);
@@ -321,14 +355,14 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
                 name: layer.name,
                 color: LAYER_COLORS[idx % LAYER_COLORS.length],
                 endVal: end.v,
-                endCost: end.c, // Needed for ROI
+                endCost: end.c,
                 changeVal: end.v - start.v,
                 changeInput: end.c - start.c,
                 profit: (end.v - end.c) - (start.v - start.c)
             };
         });
     }
-  }, [viewMode, selectedLayerId, appliedStrategy, endSnapshot, startSnapshot]);
+  }, [viewMode, selectedLayerId, activeStrategyEnd, endSnapshot, startSnapshot]);
 
   const breakdownTotals = useMemo(() => {
     return breakdownData.reduce((acc, row) => ({

@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -17,7 +18,6 @@ interface SnapshotManagerProps {
 interface AssetRowInput {
   recordId: string;
   assetId?: string; 
-  strategyId?: string;
   name: string;
   category: AssetCategory;
   price: string;
@@ -77,9 +77,8 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
         return {
             recordId: a.id,
             assetId: a.assetId,
-            strategyId: a.strategyId,
-            name: realAsset ? realAsset.name : a.name, // Prefer real name
-            category: realAsset ? realAsset.type : a.category, // Prefer real category
+            name: realAsset ? realAsset.name : a.name, 
+            category: realAsset ? realAsset.type : a.category, 
             price: a.unitPrice.toString(),
             quantityChange: a.addedQuantity.toString(),
             costChange: a.addedPrincipal.toString(),
@@ -100,21 +99,14 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
           const realAsset = assets.find(a => a.id === item.assetId);
           
           // Try to find previous record: 
-          // Priority 1: Match by Strategy ID (Exact match for split assets)
-          // Priority 2: Match by Asset ID (Legacy or simple match)
-          let prevAsset = previousSnapshot?.assets.find(a => a.strategyId === item.id);
-          if (!prevAsset) {
-             // Only fallback to assetId if we didn't find a specific strategy match. 
-             // Caution: If multiple rows exist for same assetId in prev snapshot, find() returns the first one.
-             // This fallback is mainly for legacy data migration.
-             prevAsset = previousSnapshot?.assets.find(a => a.assetId === item.assetId && !a.strategyId);
-          }
-
+          // Match by Asset ID
+          // (Since we decoupled strategy_id from position, we just look for the asset)
+          let prevAsset = previousSnapshot?.assets.find(a => a.assetId === item.assetId);
+          
           initialRows.push({
             recordId: generateId(),
             assetId: item.assetId,
-            strategyId: item.id, // Link to strategy target
-            name: realAsset ? realAsset.name : item.targetName, // Always trust Asset Library Name
+            name: realAsset ? realAsset.name : item.targetName, 
             category: realAsset ? realAsset.type : 'security', 
             price: prevAsset ? prevAsset.unitPrice.toString() : '',
             quantityChange: '',
@@ -125,28 +117,17 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
         });
       }
 
-      // 2. Add Other Assets carried over (Legacy or Manual additions)
+      // 2. Add Other Assets carried over (Assets not in current strategy but held previously)
       if (previousSnapshot) {
         previousSnapshot.assets.forEach(a => {
-          // Only add if not already covered by strategy rows
-          // We check against assetId + strategyId combination
-          const alreadyAdded = initialRows.find(r => {
-              if (a.strategyId && r.strategyId === a.strategyId) return true; // Exact strategy match
-              if (!a.strategyId && r.assetId === a.assetId && !r.strategyId) return true; // Exact manual match
-              // If strategy covers this asset but this is a manual row? 
-              // We should probably include it if it's not strictly claimed by a strategy ID.
-              return false; 
-          });
-
-          // Fallback: simple deduplication by assetId if strategyId is missing in one context
-          const assetCovered = initialRows.some(r => r.assetId === a.assetId);
+          // Check if already added via strategy logic above
+          const alreadyAdded = initialRows.find(r => r.assetId === a.assetId);
           
-          if (!alreadyAdded && !assetCovered) { // Simple check: don't add duplicate assets if already in strategy
+          if (!alreadyAdded) { 
              const realAsset = assets.find(def => def.id === a.assetId);
              initialRows.push({
               recordId: generateId(),
               assetId: a.assetId,
-              strategyId: undefined,
               name: realAsset ? realAsset.name : a.name,
               category: realAsset ? realAsset.type : a.category,
               price: a.unitPrice.toString(),
@@ -192,13 +173,12 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
       {
         recordId: generateId(),
         assetId: asset.id,
-        strategyId: undefined,
         name: asset.name,
         category: asset.type,
         price: prevAsset ? prevAsset.unitPrice.toString() : (isCashLike ? '1' : ''),
         quantityChange: '',
         costChange: '',
-        prevQuantity: prevAsset ? prevAsset.quantity : 0, // Caution: this takes total from first match if split
+        prevQuantity: prevAsset ? prevAsset.quantity : 0, 
         prevCost: prevAsset ? prevAsset.totalCost : 0
       }
     ]);
@@ -224,7 +204,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
         return {
             id: r.recordId,
             assetId: r.assetId || generateId(),
-            strategyId: r.strategyId,
             name: r.name,
             category: r.category,
             unitPrice: price,
@@ -447,9 +426,7 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                         ¥{currentVal.toLocaleString(undefined, {maximumFractionDigits: 0})}
                       </td>
                       <td className="p-4 text-center">
-                         {!row.strategyId && (
                            <button onClick={() => removeRow(idx)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
-                         )}
                       </td>
                     </tr>
                   );
