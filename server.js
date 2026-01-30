@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS positions (
     strategy_id TEXT,
     quantity REAL NOT NULL,
     price REAL NOT NULL,
-    market_value REAL NOT NULL,
+    -- market_value REMOVED: Calculated on fly (quantity * price)
     total_cost REAL,
     added_quantity REAL DEFAULT 0,
     added_principal REAL DEFAULT 0,
@@ -354,6 +354,7 @@ app.delete('/api/strategies/:id', async (req, res) => {
 // 3. Snapshots (Positions table needs minimal change, strategy_id might need to be linked to targets)
 // Note: strategy_id in positions usually refers to a specific target rule.
 app.get('/api/snapshots', async (req, res) => {
+    // UPDATED SQL: Calculate market_value on the fly (quantity * price)
     const sql = `
         SELECT 
             s.*,
@@ -366,7 +367,7 @@ app.get('/api/snapshots', async (req, res) => {
                     'category', a.type,
                     'unitPrice', p.price,
                     'quantity', p.quantity,
-                    'marketValue', p.market_value,
+                    'marketValue', (p.quantity * p.price),
                     'totalCost', p.total_cost,
                     'addedQuantity', p.added_quantity,
                     'addedPrincipal', p.added_principal
@@ -401,7 +402,8 @@ app.post('/api/snapshots', async (req, res) => {
         const snapshotId = row.length > 0 ? row[0].id : uuidv4();
         const now = Date.now();
         
-        const totalValue = assets.reduce((sum, a) => sum + a.marketValue, 0);
+        // Calculate totals dynamically from inputs
+        const totalValue = assets.reduce((sum, a) => sum + (a.quantity * a.unitPrice), 0);
         const totalInvested = assets.reduce((sum, a) => sum + a.totalCost, 0);
 
         db.serialize(() => {
@@ -416,10 +418,11 @@ app.post('/api/snapshots', async (req, res) => {
                     [snapshotId, date, totalValue, totalInvested, note, now]);
             }
 
+            // UPDATED: Removed market_value from INSERT
             const stmt = db.prepare(`
                 INSERT INTO positions 
-                (id, snapshot_id, asset_id, strategy_id, quantity, price, market_value, total_cost, added_quantity, added_principal) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (id, snapshot_id, asset_id, strategy_id, quantity, price, total_cost, added_quantity, added_principal) 
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             `);
             
             assets.forEach(a => {
@@ -430,7 +433,7 @@ app.post('/api/snapshots', async (req, res) => {
                     a.strategyId || null, 
                     a.quantity, 
                     a.unitPrice, 
-                    a.marketValue, 
+                    // a.marketValue is implicitly ignored here
                     a.totalCost, 
                     a.addedQuantity, 
                     a.addedPrincipal
