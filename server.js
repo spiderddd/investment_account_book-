@@ -180,6 +180,31 @@ app.delete('/api/assets/:id', async (req, res) => {
     } catch (e) { res.status(500).json({error: e.message}); }
 });
 
+// NEW: Asset History Endpoint (Dedicated)
+app.get('/api/assets/:id/history', async (req, res) => {
+    const assetId = req.params.id;
+    // Query joins positions with snapshots to get the date, ordered by date
+    const sql = `
+        SELECT 
+            s.date,
+            p.price as unitPrice,
+            p.quantity,
+            (p.quantity * p.price) as marketValue,
+            p.total_cost as totalCost,
+            p.added_quantity as addedQuantity,
+            p.added_principal as addedPrincipal
+        FROM positions p
+        JOIN snapshots s ON p.snapshot_id = s.id
+        WHERE p.asset_id = ?
+        ORDER BY s.date ASC
+    `;
+    
+    try {
+        const rows = await getQuery(sql, [assetId]);
+        res.json(rows);
+    } catch (e) { res.status(500).json({error: e.message}); }
+});
+
 // 2. Strategies (Hierarchical)
 app.get('/api/strategies', async (req, res) => {
     try {

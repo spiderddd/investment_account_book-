@@ -146,6 +146,16 @@ export const StorageService = {
     } catch (e) { console.error(e); return false; }
   },
 
+  // NEW: Get Specific Asset History
+  getAssetHistory: async (assetId: string): Promise<any[]> => {
+    if (USE_MOCK) return mockDelay([]);
+    try {
+        const res = await fetch(`${API_BASE}/assets/${assetId}/history`);
+        if (!res.ok) throw new Error('Failed to fetch asset history');
+        return await res.json();
+    } catch (e) { console.error(e); return []; }
+  },
+
   // --- Strategies ---
   getStrategyVersions: async (): Promise<StrategyVersion[]> => {
     if (USE_MOCK) return mockDelay(getMockDB().strategies);

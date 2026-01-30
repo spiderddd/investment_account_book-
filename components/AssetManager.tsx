@@ -1,11 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
-  Search, Plus, Trash2, Edit2, Coins, Briefcase, Landmark, TrendingUp, Wallet, X, Save, AlertCircle, ChevronDown, Clock, History, BarChart2, Eye, EyeOff, Layers, LayoutGrid, HelpCircle 
+  Search, Plus, Trash2, Edit2, Coins, Briefcase, Landmark, TrendingUp, Wallet, X, Save, AlertCircle, ChevronDown, Clock, History, BarChart2, Eye, EyeOff, Layers, LayoutGrid, HelpCircle, Loader2
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, Legend 
 } from 'recharts';
 import { Asset, AssetCategory, SnapshotItem, StrategyVersion } from '../types';
+import { StorageService } from '../services/storageService';
 
 interface AssetManagerProps {
   assets: Asset[];
@@ -78,6 +79,8 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
 
   // History View Modal State
   const [viewHistoryId, setViewHistoryId] = useState<string | null>(null);
+  const [historyData, setHistoryData] = useState<AssetHistoryRecord[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Available Dates for Dropdown
   const availableDates = useMemo(() => {
@@ -267,43 +270,56 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
 
   }, [assets, searchTerm, assetPerformanceMap, showHeldOnly, groupBy, activeStrategy]);
 
-  // --- Data Logic: Specific Asset History (For History Modal) ---
-  const selectedAssetHistory: AssetHistoryRecord[] = useMemo(() => {
-    if (!viewHistoryId) return [];
-    
-    return snapshots
-        .map(snap => {
-            // Find ALL records for this asset in this snapshot and aggregate
-            const relevantRecords = snap.assets.filter(a => a.assetId === viewHistoryId);
-            if (relevantRecords.length === 0) return null;
-
-            const agg = relevantRecords.reduce((acc, curr) => ({
-                quantity: acc.quantity + curr.quantity,
-                marketValue: acc.marketValue + curr.marketValue,
-                totalCost: acc.totalCost + curr.totalCost,
-                // Unit price is tricky when aggregated, take weighted avg or just first (assuming same price)
-                unitPrice: curr.unitPrice,
-                addedQuantity: acc.addedQuantity + curr.addedQuantity,
-                addedPrincipal: acc.addedPrincipal + curr.addedPrincipal
-            }), { quantity: 0, marketValue: 0, totalCost: 0, unitPrice: 0, addedQuantity: 0, addedPrincipal: 0 });
-
-            if (agg.quantity === 0 && agg.marketValue === 0) return null;
-
-            return {
-                date: snap.date,
-                unitPrice: agg.unitPrice,
-                quantity: agg.quantity,
-                marketValue: agg.marketValue,
-                totalCost: agg.totalCost,
-                profit: agg.marketValue - agg.totalCost,
-                roi: agg.totalCost > 0 ? ((agg.marketValue - agg.totalCost) / agg.totalCost * 100) : 0,
-                addedQuantity: agg.addedQuantity,
-                addedPrincipal: agg.addedPrincipal
-            } as AssetHistoryRecord;
-        })
-        .filter((item): item is AssetHistoryRecord => item !== null)
-        .sort((a, b) => a.date.localeCompare(b.date));
-  }, [snapshots, viewHistoryId]);
+  // --- Async Data Fetching for History ---
+  useEffect(() => {
+    if (viewHistoryId) {
+        setLoadingHistory(true);
+        StorageService.getAssetHistory(viewHistoryId)
+            .then(data => {
+                // Process and Aggregation Logic handled here instead of useMemo on all snapshots
+                // API returns raw rows. If there are multiple entries per month (e.g. split in strategy), we should aggregate them by date.
+                const aggMap = new Map<string, AssetHistoryRecord>();
+                
+                data.forEach((row: any) => {
+                    const existing = aggMap.get(row.date);
+                    if (existing) {
+                        existing.quantity += row.quantity;
+                        existing.marketValue += row.marketValue;
+                        existing.totalCost += row.totalCost;
+                        existing.addedQuantity += row.addedQuantity;
+                        existing.addedPrincipal += row.addedPrincipal;
+                        // Recalculate derived fields
+                        existing.profit = existing.marketValue - existing.totalCost;
+                        existing.roi = existing.totalCost > 0 ? (existing.profit / existing.totalCost * 100) : 0;
+                        existing.unitPrice = existing.quantity > 0 ? existing.marketValue / existing.quantity : row.unitPrice;
+                    } else {
+                        aggMap.set(row.date, {
+                            date: row.date,
+                            unitPrice: row.unitPrice,
+                            quantity: row.quantity,
+                            marketValue: row.marketValue,
+                            totalCost: row.totalCost,
+                            profit: row.marketValue - row.totalCost,
+                            roi: row.totalCost > 0 ? ((row.marketValue - row.totalCost) / row.totalCost * 100) : 0,
+                            addedQuantity: row.addedQuantity,
+                            addedPrincipal: row.addedPrincipal
+                        });
+                    }
+                });
+                
+                // Convert map to array and sort
+                const sortedHistory = Array.from(aggMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+                setHistoryData(sortedHistory);
+            })
+            .catch(err => {
+                console.error("Failed to load history", err);
+                setHistoryData([]);
+            })
+            .finally(() => setLoadingHistory(false));
+    } else {
+        setHistoryData([]);
+    }
+  }, [viewHistoryId]);
 
   // --- Handlers ---
   const openEditModal = (asset?: Asset) => {
@@ -664,137 +680,146 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
 
                 {/* Modal Content - Scrollable */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {/* Summary Cards */}
-                    {selectedAssetHistory.length > 0 ? (
-                        <>
-                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                                <div className="text-xs text-slate-500 mb-1">当前市值</div>
-                                <div className="text-xl font-bold text-slate-800">
-                                    ¥{selectedAssetHistory[selectedAssetHistory.length - 1]!.marketValue.toLocaleString()}
-                                </div>
-                            </div>
-                            <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                                <div className="text-xs text-slate-500 mb-1">累计盈亏</div>
-                                {(() => {
-                                    const last = selectedAssetHistory[selectedAssetHistory.length - 1]!;
-                                    const p = last.marketValue - last.totalCost;
-                                    return (
-                                        <div className={`text-xl font-bold ${p >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                            {p >= 0 ? '+' : ''}{p.toLocaleString()}
-                                        </div>
-                                    )
-                                })()}
-                            </div>
-                             <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
-                                <div className="text-xs text-slate-500 mb-1">持有数量</div>
-                                <div className="text-xl font-bold text-slate-800">
-                                    {selectedAssetHistory[selectedAssetHistory.length - 1]!.quantity.toLocaleString()}
-                                </div>
-                            </div>
-                         </div>
-
-                         {/* Charts Area */}
-                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            {/* Market Value vs Cost Chart */}
-                            <div className="bg-white border border-slate-100 rounded-xl p-4 shadow-sm">
-                                <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
-                                    <TrendingUp size={16} /> 市值 vs 成本
-                                </h4>
-                                <div className="h-64">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <AreaChart data={selectedAssetHistory}>
-                                            <defs>
-                                                <linearGradient id="colorMv" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.2}/>
-                                                    <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
-                                                </linearGradient>
-                                            </defs>
-                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                            <XAxis dataKey="date" tick={{fontSize:10}} tickLine={false} axisLine={false} />
-                                            <YAxis tick={{fontSize:10}} tickLine={false} axisLine={false} tickFormatter={val => `${val/1000}k`} />
-                                            <RechartsTooltip />
-                                            <Area type="monotone" dataKey="marketValue" name="市值" stroke="#f43f5e" fillOpacity={1} fill="url(#colorMv)" />
-                                            <Area type="monotone" dataKey="totalCost" name="成本" stroke="#94a3b8" strokeDasharray="5 5" fill="none" />
-                                            <Legend />
-                                        </AreaChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </div>
-
-                             {/* Price History Chart */}
-                             <div className="bg-white border border-slate-100 rounded-xl p-4 shadow-sm">
-                                <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
-                                    <BarChart2 size={16} /> 单价走势
-                                </h4>
-                                <div className="h-64">
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <LineChart data={selectedAssetHistory}>
-                                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                                            <XAxis dataKey="date" tick={{fontSize:10}} tickLine={false} axisLine={false} />
-                                            <YAxis tick={{fontSize:10}} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
-                                            <RechartsTooltip />
-                                            <Line type="stepAfter" dataKey="unitPrice" name="单价" stroke="#3b82f6" strokeWidth={2} dot={{r:3}} />
-                                        </LineChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </div>
-                         </div>
-
-                         {/* History Table */}
-                         <div>
-                            <h4 className="font-bold text-slate-700 mb-4">历史明细表</h4>
-                            <div className="overflow-x-auto rounded-lg border border-slate-200">
-                                <table className="w-full text-sm text-left">
-                                    <thead className="bg-slate-50 text-slate-500 uppercase text-xs">
-                                        <tr>
-                                            <th className="px-4 py-3">日期</th>
-                                            <th className="px-4 py-3 text-right">变动(份额)</th>
-                                            <th className="px-4 py-3 text-right">流水(本金)</th>
-                                            <th className="px-4 py-3 text-right">单价</th>
-                                            <th className="px-4 py-3 text-right">持仓量</th>
-                                            <th className="px-4 py-3 text-right">总成本</th>
-                                            <th className="px-4 py-3 text-right">市值</th>
-                                            <th className="px-4 py-3 text-right">盈亏</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {[...selectedAssetHistory].reverse().map((row) => (
-                                            <tr key={row.date} className="hover:bg-slate-50">
-                                                <td className="px-4 py-3 font-medium text-slate-700">{row.date}</td>
-                                                <td className="px-4 py-3 text-right">
-                                                    {row.addedQuantity !== 0 ? (
-                                                        <span className={row.addedQuantity > 0 ? 'text-rose-600' : 'text-emerald-600'}>
-                                                            {row.addedQuantity > 0 ? '+' : ''}{row.addedQuantity.toLocaleString()}
-                                                        </span>
-                                                    ) : '-'}
-                                                </td>
-                                                <td className="px-4 py-3 text-right">
-                                                    {row.addedPrincipal !== 0 ? (
-                                                         <span className={row.addedPrincipal > 0 ? 'text-rose-600' : 'text-emerald-600'}>
-                                                            {row.addedPrincipal > 0 ? '+' : ''}{row.addedPrincipal.toLocaleString()}
-                                                        </span>
-                                                    ) : '-'}
-                                                </td>
-                                                <td className="px-4 py-3 text-right">{row.unitPrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
-                                                <td className="px-4 py-3 text-right">{row.quantity.toLocaleString()}</td>
-                                                <td className="px-4 py-3 text-right text-slate-500">¥{row.totalCost.toLocaleString()}</td>
-                                                <td className="px-4 py-3 text-right font-bold text-slate-800">¥{row.marketValue.toLocaleString()}</td>
-                                                <td className={`px-4 py-3 text-right font-medium ${row.profit >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                                                    {row.profit >= 0 ? '+' : ''}{row.profit.toLocaleString()}
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                         </div>
-                        </>
-                    ) : (
+                    {loadingHistory ? (
                         <div className="h-64 flex flex-col items-center justify-center text-slate-400">
-                            <History size={48} className="mb-4 opacity-20" />
-                            <p>该资产暂无历史快照记录。</p>
+                            <Loader2 size={32} className="animate-spin mb-2" />
+                            <p>正在加载历史数据...</p>
                         </div>
+                    ) : (
+                        <>
+                        {/* Summary Cards */}
+                        {historyData.length > 0 ? (
+                            <>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                                    <div className="text-xs text-slate-500 mb-1">当前市值</div>
+                                    <div className="text-xl font-bold text-slate-800">
+                                        ¥{historyData[historyData.length - 1]!.marketValue.toLocaleString()}
+                                    </div>
+                                </div>
+                                <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                                    <div className="text-xs text-slate-500 mb-1">累计盈亏</div>
+                                    {(() => {
+                                        const last = historyData[historyData.length - 1]!;
+                                        const p = last.marketValue - last.totalCost;
+                                        return (
+                                            <div className={`text-xl font-bold ${p >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                {p >= 0 ? '+' : ''}{p.toLocaleString()}
+                                            </div>
+                                        )
+                                    })()}
+                                </div>
+                                <div className="p-4 bg-slate-50 rounded-xl border border-slate-100">
+                                    <div className="text-xs text-slate-500 mb-1">持有数量</div>
+                                    <div className="text-xl font-bold text-slate-800">
+                                        {historyData[historyData.length - 1]!.quantity.toLocaleString()}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Charts Area */}
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                {/* Market Value vs Cost Chart */}
+                                <div className="bg-white border border-slate-100 rounded-xl p-4 shadow-sm">
+                                    <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                                        <TrendingUp size={16} /> 市值 vs 成本
+                                    </h4>
+                                    <div className="h-64">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <AreaChart data={historyData}>
+                                                <defs>
+                                                    <linearGradient id="colorMv" x1="0" y1="0" x2="0" y2="1">
+                                                        <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.2}/>
+                                                        <stop offset="95%" stopColor="#f43f5e" stopOpacity={0}/>
+                                                    </linearGradient>
+                                                </defs>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                <XAxis dataKey="date" tick={{fontSize:10}} tickLine={false} axisLine={false} />
+                                                <YAxis tick={{fontSize:10}} tickLine={false} axisLine={false} tickFormatter={val => `${val/1000}k`} />
+                                                <RechartsTooltip />
+                                                <Area type="monotone" dataKey="marketValue" name="市值" stroke="#f43f5e" fillOpacity={1} fill="url(#colorMv)" />
+                                                <Area type="monotone" dataKey="totalCost" name="成本" stroke="#94a3b8" strokeDasharray="5 5" fill="none" />
+                                                <Legend />
+                                            </AreaChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+
+                                {/* Price History Chart */}
+                                <div className="bg-white border border-slate-100 rounded-xl p-4 shadow-sm">
+                                    <h4 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
+                                        <BarChart2 size={16} /> 单价走势
+                                    </h4>
+                                    <div className="h-64">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <LineChart data={historyData}>
+                                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                <XAxis dataKey="date" tick={{fontSize:10}} tickLine={false} axisLine={false} />
+                                                <YAxis tick={{fontSize:10}} tickLine={false} axisLine={false} domain={['auto', 'auto']} />
+                                                <RechartsTooltip />
+                                                <Line type="stepAfter" dataKey="unitPrice" name="单价" stroke="#3b82f6" strokeWidth={2} dot={{r:3}} />
+                                            </LineChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* History Table */}
+                            <div>
+                                <h4 className="font-bold text-slate-700 mb-4">历史明细表</h4>
+                                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                                    <table className="w-full text-sm text-left">
+                                        <thead className="bg-slate-50 text-slate-500 uppercase text-xs">
+                                            <tr>
+                                                <th className="px-4 py-3">日期</th>
+                                                <th className="px-4 py-3 text-right">变动(份额)</th>
+                                                <th className="px-4 py-3 text-right">流水(本金)</th>
+                                                <th className="px-4 py-3 text-right">单价</th>
+                                                <th className="px-4 py-3 text-right">持仓量</th>
+                                                <th className="px-4 py-3 text-right">总成本</th>
+                                                <th className="px-4 py-3 text-right">市值</th>
+                                                <th className="px-4 py-3 text-right">盈亏</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {[...historyData].reverse().map((row) => (
+                                                <tr key={row.date} className="hover:bg-slate-50">
+                                                    <td className="px-4 py-3 font-medium text-slate-700">{row.date}</td>
+                                                    <td className="px-4 py-3 text-right">
+                                                        {row.addedQuantity !== 0 ? (
+                                                            <span className={row.addedQuantity > 0 ? 'text-rose-600' : 'text-emerald-600'}>
+                                                                {row.addedQuantity > 0 ? '+' : ''}{row.addedQuantity.toLocaleString()}
+                                                            </span>
+                                                        ) : '-'}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right">
+                                                        {row.addedPrincipal !== 0 ? (
+                                                            <span className={row.addedPrincipal > 0 ? 'text-rose-600' : 'text-emerald-600'}>
+                                                                {row.addedPrincipal > 0 ? '+' : ''}{row.addedPrincipal.toLocaleString()}
+                                                            </span>
+                                                        ) : '-'}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right">{row.unitPrice.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+                                                    <td className="px-4 py-3 text-right">{row.quantity.toLocaleString()}</td>
+                                                    <td className="px-4 py-3 text-right text-slate-500">¥{row.totalCost.toLocaleString()}</td>
+                                                    <td className="px-4 py-3 text-right font-bold text-slate-800">¥{row.marketValue.toLocaleString()}</td>
+                                                    <td className={`px-4 py-3 text-right font-medium ${row.profit >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                        {row.profit >= 0 ? '+' : ''}{row.profit.toLocaleString()}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            </>
+                        ) : (
+                            <div className="h-64 flex flex-col items-center justify-center text-slate-400">
+                                <History size={48} className="mb-4 opacity-20" />
+                                <p>该资产暂无历史快照记录。</p>
+                            </div>
+                        )}
+                        </>
                     )}
                 </div>
             </div>
