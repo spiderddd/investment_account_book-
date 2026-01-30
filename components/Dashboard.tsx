@@ -17,6 +17,13 @@ type TimeRange = 'all' | 'ytd' | '1y';
 
 const LAYER_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#64748b'];
 
+const CATEGORY_COLORS: Record<string, string> = {
+  '股票基金': '#3b82f6', 
+  '商品另类': '#f59e0b', 
+  '现金固收': '#64748b', 
+  '其他': '#a855f7'
+};
+
 const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('strategy');
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
@@ -171,15 +178,11 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
         return acc;
       }, {} as Record<string, number>);
 
-      const colors: Record<string, string> = {
-        '股票基金': '#3b82f6', '商品另类': '#f59e0b', '现金固收': '#64748b', '其他': '#a855f7'
-      };
-
       return Object.keys(grouped).map(key => ({
         name: key,
         value: grouped[key],
         percent: parseFloat(((grouped[key] / endMetrics.value) * 100).toFixed(1)),
-        color: colors[key] || '#cbd5e1'
+        color: CATEGORY_COLORS[key] || '#cbd5e1'
       })).sort((a, b) => b.value - a.value);
     }
   }, [appliedStrategy, endSnapshot, endMetrics, viewMode, selectedLayerId]);
@@ -227,10 +230,8 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
 
   // --- Breakdown Table Data ---
   const breakdownData = useMemo(() => {
-    if (!endSnapshot || !viewMode || (viewMode === 'strategy' && !appliedStrategy)) return [];
-    
-    // For Total View, we don't show breakdown table in this context
-    if (viewMode === 'total') return [];
+    if (!endSnapshot) return [];
+    if (viewMode === 'strategy' && !appliedStrategy) return [];
 
     const startSnap = startSnapshot; // null if all time or first record
     
@@ -244,8 +245,51 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
         };
     };
 
-    if (selectedLayerId) {
-        // ASSETS Breakdown
+    if (viewMode === 'total') {
+        // --- Total View: Group by Category ---
+        const categories = ['股票基金', '现金固收', '商品另类', '其他'];
+        const catMap: Record<string, string> = {
+            'security': '股票基金', 'fund': '股票基金',
+            'fixed': '现金固收', 'wealth': '现金固收',
+            'gold': '商品另类', 'crypto': '商品另类',
+            'other': '其他'
+        };
+
+        const calcCatStats = (s: SnapshotItem | null) => {
+            const res: Record<string, { v: number, c: number }> = {};
+            categories.forEach(c => res[c] = { v: 0, c: 0 });
+            if (!s) return res;
+            
+            s.assets.forEach(a => {
+                const cat = catMap[a.category] || '其他';
+                if (res[cat]) {
+                    res[cat].v += a.marketValue;
+                    res[cat].c += a.totalCost;
+                }
+            });
+            return res;
+        };
+
+        const endStats = calcCatStats(endSnapshot);
+        const startStats = calcCatStats(startSnap);
+
+        return categories.map(cat => {
+            const end = endStats[cat];
+            const start = startStats[cat];
+             return {
+                id: cat,
+                name: cat,
+                color: CATEGORY_COLORS[cat] || '#cbd5e1',
+                endVal: end.v,
+                endCost: end.c,
+                changeVal: end.v - start.v,
+                changeInput: end.c - start.c,
+                profit: (end.v - end.c) - (start.v - start.c)
+            };
+        }).filter(r => r.endVal > 0 || Math.abs(r.changeVal) > 0 || Math.abs(r.profit) > 0).sort((a,b) => b.endVal - a.endVal);
+
+    } else if (selectedLayerId) {
+        // --- Strategy View: ASSETS Breakdown (Drill Down) ---
         const layer = appliedStrategy!.layers.find(l => l.id === selectedLayerId);
         if (!layer) return [];
         
@@ -266,7 +310,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
             };
         }).sort((a,b) => b.endVal - a.endVal);
     } else {
-        // LAYERS Breakdown
+        // --- Strategy View: LAYERS Breakdown (Top Level) ---
         return appliedStrategy!.layers.map((layer, idx) => {
             const assetIds = new Set<string>(layer.items.map(i => i.assetId));
             const end = getStats(endSnapshot, assetIds);
@@ -523,7 +567,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
                   <div className="flex items-center justify-between mb-4">
                       <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
                           <Layers size={14} className="text-slate-400"/>
-                          {selectedLayerId ? '本期资产变动明细' : '本期层级变动明细'}
+                          {viewMode === 'total' ? '本期类别变动明细' : (selectedLayerId ? '本期资产变动明细' : '本期层级变动明细')}
                       </h4>
                       <span className="text-[10px] text-slate-400 bg-slate-50 px-2 py-1 rounded">
                          区间: {startSnapshot ? startSnapshot.date : '期初'} → {endSnapshot?.date}
