@@ -35,7 +35,7 @@ const App: React.FC = () => {
       setError(null);
     } catch (err) {
       console.error(err);
-      setError("无法连接到 NAS 服务器。请确保 server.js 已启动。");
+      setError("无法连接到服务器。请确保后端服务已启动。");
     } finally {
       setIsLoading(false);
     }
@@ -112,7 +112,7 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-400 gap-4">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-        <div className="text-sm">正在同步 NAS 数据...</div>
+        <div className="text-sm">正在同步 后端 数据...</div>
       </div>
     );
   }
@@ -138,7 +138,7 @@ const App: React.FC = () => {
               <Wallet className="text-white" size={20} />
             </div>
             <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-700 to-blue-500">
-              InvestTrack <span className="text-xs text-slate-300 font-normal ml-1">NAS Edition</span>
+              InvestTrack <span className="text-xs text-slate-300 font-normal ml-1">Personnel Edition</span>
             </h1>
           </div>
           
