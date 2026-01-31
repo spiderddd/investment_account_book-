@@ -7,6 +7,9 @@ interface DataContextType {
   assets: Asset[];
   strategies: StrategyVersion[];
   snapshots: SnapshotItem[];
+  snapshotTotal: number;
+  snapshotPage: number;
+  setSnapshotPage: (page: number) => void;
   isLoading: boolean;
   error: string | null;
   refreshAssets: () => Promise<void>;
@@ -20,7 +23,13 @@ const DataContext = createContext<DataContextType | undefined>(undefined);
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [strategies, setStrategies] = useState<StrategyVersion[]>([]);
+  
+  // Snapshots State
   const [snapshots, setSnapshots] = useState<SnapshotItem[]>([]);
+  const [snapshotTotal, setSnapshotTotal] = useState(0);
+  const [snapshotPage, setSnapshotPage] = useState(1);
+  const SNAPSHOT_LIMIT = 20;
+
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,22 +49,31 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const refreshSnapshots = useCallback(async () => {
     try {
-      const data = await StorageService.getSnapshots();
-      setSnapshots(data);
+      const data = await StorageService.getSnapshots(snapshotPage, SNAPSHOT_LIMIT);
+      setSnapshots(data.items);
+      setSnapshotTotal(data.total);
     } catch (e) { console.error(e); }
-  }, []);
+  }, [snapshotPage]);
+
+  // Handle page change -> triggers fetch
+  useEffect(() => {
+    if (!isLoading) { // Skip on initial load as refreshAll handles it
+        refreshSnapshots();
+    }
+  }, [snapshotPage]);
 
   const refreshAll = useCallback(async () => {
     setIsLoading(true);
     try {
-      const [a, st, sn] = await Promise.all([
+      const [a, st, snData] = await Promise.all([
         StorageService.getAssets(),
         StorageService.getStrategyVersions(),
-        StorageService.getSnapshots()
+        StorageService.getSnapshots(snapshotPage, SNAPSHOT_LIMIT)
       ]);
       setAssets(a);
       setStrategies(st);
-      setSnapshots(sn);
+      setSnapshots(snData.items);
+      setSnapshotTotal(snData.total);
       setError(null);
     } catch (err) {
       console.error(err);
@@ -63,7 +81,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, []); // Only on mount essentially, or manual full refresh. We don't depend on snapshotPage here to avoid loops if not careful.
 
   useEffect(() => {
     refreshAll();
@@ -73,7 +91,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     <DataContext.Provider value={{ 
       assets, 
       strategies, 
-      snapshots, 
+      snapshots,
+      snapshotTotal,
+      snapshotPage,
+      setSnapshotPage, 
       isLoading, 
       error,
       refreshAssets,

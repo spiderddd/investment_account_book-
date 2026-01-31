@@ -7,7 +7,9 @@ const router = express.Router();
 
 router.get('/', async (req, res) => {
     try {
-        const data = await SnapshotService.getList();
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 20;
+        const data = await SnapshotService.getList(page, limit);
         sendSuccess(res, data);
     } catch (e) { sendError(res, e, "Get Snapshots"); }
 });

@@ -2,10 +2,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Plus, Calendar, Trash2, Coins, Landmark, Briefcase, TrendingUp, DollarSign, Save, X, Activity, Search, FileText, ChevronDown, ChevronUp, ArrowRight, Wallet, Bitcoin, Loader2 } from 'lucide-react';
+import { Plus, Calendar, Trash2, Coins, Landmark, Briefcase, TrendingUp, DollarSign, Save, X, Activity, Search, FileText, ChevronDown, ChevronUp, ArrowRight, Wallet, Bitcoin, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { SnapshotItem, StrategyVersion, AssetRecord, AssetCategory, Asset } from '../types';
 import { generateId, StorageService } from '../services/storageService';
 import { getStrategyForDate } from '../utils/calculators';
+import { useData } from '../contexts/DataContext';
 
 interface SnapshotManagerProps {
   snapshots: SnapshotItem[];
@@ -36,6 +37,9 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
   onSave, 
   onCreateAsset 
 }) => {
+  // Use Pagination from Context
+  const { snapshotPage, setSnapshotPage, snapshotTotal } = useData();
+
   const [viewMode, setViewMode] = useState<'list' | 'entry'>('list');
   const [selectedSnapshotId, setSelectedSnapshotId] = useState<string | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -56,14 +60,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     return getStrategyForDate(versions, date) || versions[versions.length - 1];
   }, [versions, date]);
 
-  // Find previous snapshot metadata (summary is enough for logic to find ID, but we need details for calculation)
-  // We will fetch previous snapshot details on demand inside initEntryForm
-  const previousSnapshotSummary = useMemo(() => {
-    return snapshots
-      .filter(s => s.date < date)
-      .sort((a, b) => b.date.localeCompare(a.date))[0];
-  }, [snapshots, date]);
-
   // --- Entry Logic ---
 
   const initEntryForm = async (snapshotId?: string) => {
@@ -81,10 +77,22 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
             existing = await StorageService.getSnapshot(snapshotId);
         }
 
-        // Fetch previous for "carry over" logic if creating new or if needed for calculating diff
-        // (If creating new, we rely on state `date`. If editing, we rely on `existing.date`)
+        // Fetch previous for "carry over" logic
         const refDate = existing ? existing.date : baseDate;
-        const prevSummary = snapshots.filter(s => s.date < refDate).sort((a, b) => b.date.localeCompare(a.date))[0];
+        
+        // We need to fetch the lightweight summary of the previous snapshot first to get its ID
+        // Since the current list might be paginated and not contain the previous one,
+        // we use the History API (all lightweight snapshots) or just search in current if lucky.
+        // For robustness, we assume we might need to fetch the history list if not found.
+        let prevSummary = snapshots.find(s => s.date < refDate);
+        if (!prevSummary) {
+           // Fallback: try to find from history endpoint (all items)
+           const historyList = await StorageService.getSnapshotsHistory();
+           prevSummary = historyList.filter(s => s.date < refDate).sort((a, b) => b.date.localeCompare(a.date))[0];
+        } else {
+           // If found in current page, ensure we pick the closest one
+           prevSummary = snapshots.filter(s => s.date < refDate).sort((a, b) => b.date.localeCompare(a.date))[0];
+        }
         
         if (prevSummary) {
             prevDetails = await StorageService.getSnapshot(prevSummary.id);
@@ -183,11 +191,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
       alert("该资产已在列表中");
       return;
     }
-    // Note: We can't easily access prevSnapshot details here for manual add without fetching everything.
-    // Simplifying assumption: manual add of new asset implies prevQuantity 0, 
-    // OR we could try to look up from the cached 'previousSnapshotSummary' but we don't have assets there.
-    // For now, assume 0. User can edit prevQuantity if we exposed it, but we don't.
-    
     const isCashLike = asset.type === 'fixed' || asset.type === 'wealth';
     setRows([
       ...rows,
@@ -284,7 +287,8 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
   };
 
   if (viewMode === 'entry') {
-    const totalAssetsVal = rows.reduce((sum, r) => {
+     // ... (Keep existing Entry View code unchanged, just ensuring it's wrapped properly)
+     const totalAssetsVal = rows.reduce((sum, r) => {
        const p = parseFloat(r.price) || (r.category === 'fixed' || r.category === 'wealth' ? 1 : 0);
        const q = r.prevQuantity + (parseFloat(r.quantityChange) || 0);
        return sum + (p * q);
@@ -500,7 +504,11 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     );
   }
 
-  // --- View: List (Unchanged) ---
+  // --- View: List (Pagination Added) ---
+  const totalPages = Math.ceil(snapshotTotal / 20); // Hardcoded limit matches Context default
+  const hasNext = snapshotPage < totalPages;
+  const hasPrev = snapshotPage > 1;
+
   return (
     <div className="pb-20">
       <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
@@ -526,10 +534,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
            </div>
         ) : (
           sortedSnapshots.map(s => {
-            // Summary doesn't have asset details, so we can't calculate netInput here reliably without fetching
-            // We'll hide netInput column in list view OR we should add it to snapshot table if important.
-            // For now, removing the netInput calculation in list view to avoid crash.
-            
             return (
             <div key={s.id} className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden hover:shadow-md transition-shadow">
               <div className="p-4 flex items-center justify-between bg-slate-50/50 border-b border-slate-100">
@@ -553,8 +557,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                  </div>
               </div>
               
-              {/* Asset tags removed in list view because we don't have asset details anymore */}
-
               {s.note ? (
                  <div className="px-4 py-2 bg-yellow-50/30">
                    <button onClick={() => toggleNote(s.id)} className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-slate-700 w-full">
@@ -575,6 +577,30 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
           )})
         )}
       </div>
+
+      {/* Pagination Controls */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-4 mt-8">
+            <button 
+                onClick={() => setSnapshotPage(snapshotPage - 1)}
+                disabled={!hasPrev}
+                className={`p-2 rounded-lg flex items-center gap-1 text-sm font-medium ${!hasPrev ? 'text-slate-300 cursor-not-allowed' : 'text-slate-600 hover:bg-slate-200 bg-white shadow-sm border border-slate-200'}`}
+            >
+                <ChevronLeft size={16} /> 上一页
+            </button>
+            <span className="text-sm text-slate-500 font-medium">
+                第 {snapshotPage} 页 / 共 {totalPages} 页
+            </span>
+            <button 
+                onClick={() => setSnapshotPage(snapshotPage + 1)}
+                disabled={!hasNext}
+                className={`p-2 rounded-lg flex items-center gap-1 text-sm font-medium ${!hasNext ? 'text-slate-300 cursor-not-allowed' : 'text-slate-600 hover:bg-slate-200 bg-white shadow-sm border border-slate-200'}`}
+            >
+                下一页 <ChevronRight size={16} />
+            </button>
+        </div>
+      )}
+
     </div>
   );
 };

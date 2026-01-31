@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
     updated_at INTEGER
 );
 
+-- LEGACY TABLE (Kept for migration safety, but logic will move to transactions)
 CREATE TABLE IF NOT EXISTS positions (
     id TEXT PRIMARY KEY,
     snapshot_id TEXT NOT NULL,
@@ -83,6 +84,31 @@ CREATE TABLE IF NOT EXISTS positions (
     FOREIGN KEY(snapshot_id) REFERENCES snapshots(id) ON DELETE CASCADE,
     FOREIGN KEY(asset_id) REFERENCES assets(id)
 );
+
+-- NEW: Independent Price History (Crawler Friendly)
+CREATE TABLE IF NOT EXISTS market_prices (
+    id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    price REAL NOT NULL,
+    source TEXT DEFAULT 'manual', -- 'manual', 'crawler', 'system'
+    updated_at INTEGER,
+    UNIQUE(asset_id, date)
+);
+
+-- NEW: Ledger / Transaction Table (Source of Truth for Quantity/Cost)
+CREATE TABLE IF NOT EXISTS transactions (
+    id TEXT PRIMARY KEY,
+    asset_id TEXT NOT NULL,
+    snapshot_id TEXT, -- Optional: Links transaction to a monthly closure for easier editing
+    date TEXT NOT NULL,
+    type TEXT, -- 'buy', 'sell', 'interest', 'adjustment'
+    quantity_change REAL DEFAULT 0,
+    cost_change REAL DEFAULT 0,
+    note TEXT,
+    created_at INTEGER,
+    FOREIGN KEY(asset_id) REFERENCES assets(id)
+);
 `;
 
 export const initDB = () => {
@@ -94,10 +120,9 @@ export const initDB = () => {
                 // Simple Migration Checks
                 const migrations = [
                     "ALTER TABLE assets ADD COLUMN note TEXT",
-                    "ALTER TABLE positions ADD COLUMN added_quantity REAL DEFAULT 0",
-                    "ALTER TABLE positions ADD COLUMN added_principal REAL DEFAULT 0",
-                    "ALTER TABLE snapshots ADD COLUMN created_at INTEGER",
-                    "ALTER TABLE positions ADD COLUMN created_at INTEGER"
+                    "CREATE INDEX IF NOT EXISTS idx_prices_asset_date ON market_prices(asset_id, date)",
+                    "CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date)",
+                    "CREATE INDEX IF NOT EXISTS idx_transactions_snapshot ON transactions(snapshot_id)"
                 ];
                 migrations.forEach(sql => {
                     db.run(sql, () => {});
@@ -137,7 +162,6 @@ export const withTransaction = async (callback) => {
         return result;
     } catch (err) {
         await runQuery("ROLLBACK");
-        // Log the error internally but rethrow so the route handler can send a 500
         console.error("Transaction failed, rolled back.", err);
         throw err;
     }

@@ -33,6 +33,17 @@ router.delete('/:id', async (req, res) => {
     } catch (e) { sendError(res, e, "Delete Asset"); }
 });
 
+// New Endpoint: Manually update price (or via Crawler)
+router.post('/:id/price', async (req, res) => {
+    try {
+        const { price, date } = req.body;
+        // Default to today if no date
+        const targetDate = date || new Date().toISOString().slice(0, 10);
+        const data = await AssetService.updatePrice(req.params.id, price, targetDate);
+        sendSuccess(res, data);
+    } catch (e) { sendError(res, e, "Update Price"); }
+});
+
 router.get('/:id/history', async (req, res) => {
     try {
         const data = await AssetService.getHistory(req.params.id);

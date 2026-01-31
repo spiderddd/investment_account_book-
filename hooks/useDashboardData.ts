@@ -19,6 +19,7 @@ export const useDashboardData = (strategies: StrategyVersion[], snapshots: Snaps
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
 
   // 1. History Data State (Lightweight with assets for charts)
+  // This is the source of truth for ALL available history dates now that 'snapshots' prop is paginated.
   const [historySnapshots, setHistorySnapshots] = useState<SnapshotItem[]>([]);
   
   // 2. Detail State (Full details for Pie/Breakdown)
@@ -33,8 +34,11 @@ export const useDashboardData = (strategies: StrategyVersion[], snapshots: Snaps
   }, []);
 
   const sortedAllSnapshots = useMemo(() => {
-    return [...snapshots].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [snapshots]);
+    // We prefer historySnapshots as it contains the full timeline. 
+    // Fallback to prop 'snapshots' if history not loaded yet (though charts might be empty)
+    const source = historySnapshots.length > 0 ? historySnapshots : snapshots;
+    return [...source].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [historySnapshots, snapshots]);
 
   const rangeConfig = useMemo(() => {
     if (timeRange === 'all') return { startDate: null, label: '历史累计' };
