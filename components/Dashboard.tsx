@@ -4,7 +4,7 @@ import {
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend 
 } from 'recharts';
-import { TrendingUp, DollarSign, Activity, Wallet, History, Calendar, Filter, ArrowRight, ChevronRight, ArrowLeft, Layers, Loader2 } from 'lucide-react';
+import { TrendingUp, DollarSign, Activity, Wallet, History, Calendar, Filter, ArrowRight, ChevronRight, ArrowLeft, Layers, Loader2, Search } from 'lucide-react';
 import { StrategyVersion, SnapshotItem } from '../types';
 import { useDashboardData } from '../hooks/useDashboardData';
 
@@ -122,7 +122,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Allocation Pie Chart */}
+        {/* LEFT: Allocation Pie Chart & Details List */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col">
           <div className="flex items-center justify-between mb-6">
              <div className="flex items-center gap-2">
@@ -150,6 +150,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
              )}
           </div>
           
+          {/* Chart Area */}
           {loadingDetails ? (
             <div className="h-64 flex flex-col items-center justify-center text-slate-400 bg-slate-50 rounded-lg animate-pulse">
                 <Loader2 className="animate-spin mb-2" />
@@ -182,20 +183,27 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="h-64 flex items-center justify-center text-slate-400 bg-slate-50 rounded-lg">暂无数据</div>
+            <div className="h-64 flex items-center justify-center text-slate-400 bg-slate-50 rounded-lg">
+                <div className="text-center">
+                    <Search size={32} className="mx-auto mb-2 opacity-50" />
+                    <span>暂无分布数据</span>
+                </div>
+            </div>
           )}
 
+          {/* List Area - Always visible header structure */}
           <div className="mt-6 border-t border-slate-50 pt-4">
             <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
                 {viewMode === 'total' ? '按资产类别' : (selectedLayerId ? '层级内资产明细' : '按防御层级 (点击查看详情)')}
             </h4>
+            
             {loadingDetails ? (
                 <div className="space-y-2">
                     <div className="h-8 bg-slate-100 rounded animate-pulse"></div>
                     <div className="h-8 bg-slate-100 rounded animate-pulse"></div>
                     <div className="h-8 bg-slate-100 rounded animate-pulse"></div>
                 </div>
-            ) : (
+            ) : allocationData.length > 0 ? (
                 <>
                 <div className="flex items-center justify-between text-xs font-semibold text-slate-400 mb-2 px-2">
                 <span className="flex-1">名称</span>
@@ -237,11 +245,13 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
                 ))}
                 </div>
                 </>
+            ) : (
+                <div className="text-xs text-slate-400 italic text-center py-4">无数据条目</div>
             )}
           </div>
         </div>
 
-        {/* Growth Curve & Breakdown Table */}
+        {/* RIGHT: History Area Chart & Breakdown Table */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 flex flex-col">
           <div className="flex justify-between items-center mb-6">
             <div>
@@ -284,27 +294,25 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
             <div className="h-64 flex items-center justify-center text-slate-400 bg-slate-50 rounded-lg">该时间段内暂无数据</div>
           )}
 
-          {/* Detailed Breakdown Table */}
-          {loadingDetails ? (
-              <div className="mt-8 pt-4 border-t border-slate-100">
-                  <div className="flex items-center gap-2 mb-4">
-                      <Loader2 className="animate-spin text-slate-400" size={16} />
-                      <span className="text-sm text-slate-500">正在计算区间变动明细...</span>
-                  </div>
-              </div>
-          ) : breakdownData.length > 0 && (
-              <div className="mt-8 pt-4 border-t border-slate-100">
-                  <div className="flex items-center justify-between mb-4">
-                      <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                          <Layers size={14} className="text-slate-400"/>
-                          {viewMode === 'total' ? '本期类别变动明细' : (selectedLayerId ? '本期资产变动明细' : '本期层级变动明细')}
-                      </h4>
-                      <span className="text-[10px] text-slate-400 bg-slate-50 px-2 py-1 rounded">
-                         区间: {startSnapshot ? startSnapshot.date : '期初'} → {endSnapshot?.date}
-                      </span>
-                  </div>
-                  
-                  <div className="overflow-x-auto no-scrollbar">
+          {/* Detailed Breakdown Table - Always visible structure */}
+          <div className="mt-8 pt-4 border-t border-slate-100">
+            <div className="flex items-center justify-between mb-4">
+                <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                    <Layers size={14} className="text-slate-400"/>
+                    {viewMode === 'total' ? '本期类别变动明细' : (selectedLayerId ? '本期资产变动明细' : '本期层级变动明细')}
+                </h4>
+                <span className="text-[10px] text-slate-400 bg-slate-50 px-2 py-1 rounded">
+                    区间: {startSnapshot ? startSnapshot.date : '期初'} → {endSnapshot?.date || '...'}
+                </span>
+            </div>
+              
+            {loadingDetails ? (
+                <div className="flex items-center gap-2 mb-4 py-4 justify-center">
+                    <Loader2 className="animate-spin text-slate-400" size={16} />
+                    <span className="text-sm text-slate-500">正在计算区间变动明细...</span>
+                </div>
+            ) : breakdownData.length > 0 ? (
+                <div className="overflow-x-auto no-scrollbar">
                       <table className="w-full text-xs text-left table-fixed">
                           <thead>
                               <tr className="text-slate-400 border-b border-slate-100">
@@ -367,9 +375,11 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
                               </tr>
                           </tfoot>
                       </table>
-                  </div>
-              </div>
-          )}
+                </div>
+            ) : (
+                <div className="text-xs text-slate-400 italic text-center py-4">无变动数据</div>
+            )}
+          </div>
         </div>
       </div>
     </div>

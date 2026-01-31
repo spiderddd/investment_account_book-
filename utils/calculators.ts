@@ -216,12 +216,17 @@ export const calculateBreakdownData = (
     viewMode: 'strategy' | 'total',
     selectedLayerId: string | null
 ) => {
-    // Safety check: both snapshots must have assets loaded
-    if (!endSnapshot || !endSnapshot.assets || !startSnapshot || !startSnapshot.assets) return [];
+    // 1. Safety check: End snapshot must have assets loaded
+    if (!endSnapshot || !endSnapshot.assets) return [];
+    
+    // 2. Start snapshot can be null (meaning inception/start of time). 
+    //    BUT if it is NOT null, it MUST have assets loaded to calculate diff.
+    if (startSnapshot && !startSnapshot.assets) return [];
     
     // Helper to get stats for a set of Asset IDs
-    const getStats = (s: SnapshotItem, assetIds: Set<string>) => {
-        const relevant = s.assets!.filter(a => assetIds.has(a.assetId));
+    const getStats = (s: SnapshotItem | null, assetIds: Set<string>) => {
+        if (!s || !s.assets) return { v: 0, c: 0 };
+        const relevant = s.assets.filter(a => assetIds.has(a.assetId));
         return {
             v: relevant.reduce((sum, a) => sum + a.marketValue, 0),
             c: relevant.reduce((sum, a) => sum + a.totalCost, 0)
@@ -238,17 +243,19 @@ export const calculateBreakdownData = (
             'other': '其他'
         };
 
-        const calcCatStats = (s: SnapshotItem) => {
+        const calcCatStats = (s: SnapshotItem | null) => {
             const res: Record<string, { v: number, c: number }> = {};
             categories.forEach(c => res[c] = { v: 0, c: 0 });
             
-            s.assets!.forEach(a => {
-                const cat = catMap[a.category] || '其他';
-                if (res[cat]) {
-                    res[cat].v += a.marketValue;
-                    res[cat].c += a.totalCost;
-                }
-            });
+            if (s && s.assets) {
+                s.assets.forEach(a => {
+                    const cat = catMap[a.category] || '其他';
+                    if (res[cat]) {
+                        res[cat].v += a.marketValue;
+                        res[cat].c += a.totalCost;
+                    }
+                });
+            }
             return res;
         };
 
