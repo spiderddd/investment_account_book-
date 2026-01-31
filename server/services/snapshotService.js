@@ -1,6 +1,6 @@
 
 import { v4 as uuidv4 } from 'uuid';
-import { db, runQuery, getQuery, withTransaction } from '../db.js';
+import { runQuery, getQuery, withTransaction } from '../db.js';
 
 export const SnapshotService = {
     getList: async (page = 1, limit = 20) => {
@@ -175,47 +175,30 @@ export const SnapshotService = {
             // We need to clear previous transactions linked to this snapshot_id to avoid duplication if editing.
             await runQuery("DELETE FROM transactions WHERE snapshot_id = ?", [snapshotId]);
             
-            // We also insert/update prices for this date
-            const priceInsertStmt = db.prepare(`
-                INSERT INTO market_prices (id, asset_id, date, price, source, updated_at)
-                VALUES (?, ?, ?, ?, 'manual', ?)
-                ON CONFLICT(asset_id, date) DO UPDATE SET price=excluded.price, updated_at=excluded.updated_at
-            `);
-
-            const transactionStmt = db.prepare(`
-                INSERT INTO transactions (id, asset_id, snapshot_id, date, type, quantity_change, cost_change, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `);
-
+            // 3. Process each asset insert strictly sequentially
             for (const asset of assets) {
                 // A. Save Price
                 if (asset.unitPrice !== undefined && asset.unitPrice !== null) {
-                    priceInsertStmt.run(uuidv4(), asset.assetId, date, asset.unitPrice, now);
+                    await runQuery(`
+                        INSERT INTO market_prices (id, asset_id, date, price, source, updated_at)
+                        VALUES (?, ?, ?, ?, 'manual', ?)
+                        ON CONFLICT(asset_id, date) DO UPDATE SET price=excluded.price, updated_at=excluded.updated_at
+                    `, [uuidv4(), asset.assetId, date, asset.unitPrice, now]);
                 }
 
                 // B. Save Transaction (Flow)
-                // Only save if there is actual change
                 const qChange = parseFloat(asset.addedQuantity) || 0;
                 const cChange = parseFloat(asset.addedPrincipal) || 0;
                 
                 if (Math.abs(qChange) > 0 || Math.abs(cChange) > 0) {
-                     transactionStmt.run(
-                        uuidv4(),
-                        asset.assetId,
-                        snapshotId,
-                        date,
-                        'adjustment', // generic type for snapshot adjustments
-                        qChange,
-                        cChange,
-                        now
-                     );
+                     await runQuery(`
+                        INSERT INTO transactions (id, asset_id, snapshot_id, date, type, quantity_change, cost_change, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     `, [uuidv4(), asset.assetId, snapshotId, date, 'adjustment', qChange, cChange, now]);
                 }
             }
-            priceInsertStmt.finalize();
-            transactionStmt.finalize();
 
-            // 3. Recalculate Portfolio Totals (Derived from Ledger + Prices)
-            // We need to re-query the state because "Quantity" depends on ALL history, not just this input
+            // 4. Recalculate Portfolio Totals (Derived from Ledger + Prices)
             const holdingsSql = `
                 SELECT 
                     t.asset_id,
@@ -239,7 +222,7 @@ export const SnapshotService = {
                 calcTotalInvested += h.totalCost;
             }
 
-            // 4. Update Header with calculated totals (Cache)
+            // 5. Update Header with calculated totals (Cache)
             if (snapRows.length > 0) {
                 await runQuery("UPDATE snapshots SET total_value=?, total_invested=?, note=?, updated_at=? WHERE id=?", 
                     [calcTotalValue, calcTotalInvested, note, now, snapshotId]);

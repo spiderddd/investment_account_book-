@@ -1,6 +1,6 @@
 
 import { v4 as uuidv4 } from 'uuid';
-import { db, runQuery, getQuery, withTransaction } from '../db.js';
+import { runQuery, getQuery, withTransaction } from '../db.js';
 
 export const StrategyService = {
     getAll: async () => {
@@ -53,25 +53,25 @@ export const StrategyService = {
             );
 
             if (layers && layers.length > 0) {
-                const layerStmt = db.prepare("INSERT INTO strategy_layers (id, version_id, name, weight, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)");
-                const targetStmt = db.prepare("INSERT INTO strategy_targets (id, layer_id, asset_id, target_name, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-                
                 for (let lIdx = 0; lIdx < layers.length; lIdx++) {
                     const layer = layers[lIdx];
                     const layerId = uuidv4();
-                    layerStmt.run(layerId, versionId, layer.name, layer.weight, layer.description || '', lIdx);
+                    
+                    await runQuery(
+                        "INSERT INTO strategy_layers (id, version_id, name, weight, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+                        [layerId, versionId, layer.name, layer.weight, layer.description || '', lIdx]
+                    );
                     
                     if (layer.items) {
                         for (let tIdx = 0; tIdx < layer.items.length; tIdx++) {
                             const item = layer.items[tIdx];
-                            targetStmt.run(
-                                uuidv4(), layerId, item.assetId, item.targetName, item.weight, item.color, item.note || '', tIdx
+                            await runQuery(
+                                "INSERT INTO strategy_targets (id, layer_id, asset_id, target_name, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                [uuidv4(), layerId, item.assetId, item.targetName, item.weight, item.color, item.note || '', tIdx]
                             );
                         }
                     }
                 }
-                layerStmt.finalize();
-                targetStmt.finalize();
             }
             return { success: true, id: versionId };
         });
@@ -93,17 +93,6 @@ export const StrategyService = {
             const existingLayerIds = new Set(existingLayers.map(l => l.id));
             const incomingLayerIds = new Set();
             
-            // Prepare statements
-            const insertLayerStmt = db.prepare("INSERT INTO strategy_layers (id, version_id, name, weight, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)");
-            const updateLayerStmt = db.prepare("UPDATE strategy_layers SET name=?, weight=?, description=?, sort_order=? WHERE id=?");
-            
-            // We also need to handle targets. For simplicity in this "Diff" implementation:
-            // We will sync layers carefully (keeping IDs stable), but strictly rewrite targets for each layer.
-            // Why? Because targets often change sort order or are swapped entirely. 
-            // Keeping Layer IDs stable is the most important part for potential future history tracking.
-            const deleteTargetsInLayerStmt = db.prepare("DELETE FROM strategy_targets WHERE layer_id = ?");
-            const insertTargetStmt = db.prepare("INSERT INTO strategy_targets (id, layer_id, asset_id, target_name, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-
             if (layers && layers.length > 0) {
                 for (let lIdx = 0; lIdx < layers.length; lIdx++) {
                     const layer = layers[lIdx];
@@ -111,15 +100,21 @@ export const StrategyService = {
                     let layerId = layer.id;
                     if (layerId && existingLayerIds.has(layerId)) {
                         // Update existing layer
-                        updateLayerStmt.run(layer.name, layer.weight, layer.description || '', lIdx, layerId);
+                        await runQuery(
+                            "UPDATE strategy_layers SET name=?, weight=?, description=?, sort_order=? WHERE id=?",
+                            [layer.name, layer.weight, layer.description || '', lIdx, layerId]
+                        );
                         incomingLayerIds.add(layerId);
                         
                         // Clear targets for this layer to re-insert (Simpler than full diff for leaf nodes)
-                        deleteTargetsInLayerStmt.run(layerId);
+                        await runQuery("DELETE FROM strategy_targets WHERE layer_id = ?", [layerId]);
                     } else {
                         // Insert new layer
                         layerId = (layer.id && layer.id.length > 10) ? layer.id : uuidv4();
-                        insertLayerStmt.run(layerId, id, layer.name, layer.weight, layer.description || '', lIdx);
+                        await runQuery(
+                            "INSERT INTO strategy_layers (id, version_id, name, weight, description, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
+                            [layerId, id, layer.name, layer.weight, layer.description || '', lIdx]
+                        );
                         incomingLayerIds.add(layerId);
                     }
 
@@ -129,8 +124,9 @@ export const StrategyService = {
                             const item = layer.items[tIdx];
                             // Keep target ID if provided, else new
                             const itemId = (item.id && item.id.length > 10) ? item.id : uuidv4();
-                            insertTargetStmt.run(
-                                itemId, layerId, item.assetId, item.targetName, item.weight, item.color, item.note || '', tIdx
+                            await runQuery(
+                                "INSERT INTO strategy_targets (id, layer_id, asset_id, target_name, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                [itemId, layerId, item.assetId, item.targetName, item.weight, item.color, item.note || '', tIdx]
                             );
                         }
                     }
@@ -142,15 +138,9 @@ export const StrategyService = {
             const layersToDelete = [...existingLayerIds].filter(x => !incomingLayerIds.has(x));
             if (layersToDelete.length > 0) {
                 // Targets cascade delete via DB constraints, but let's be safe/explicit if needed. 
-                // schema has ON DELETE CASCADE so removing layer is enough.
                 const placeholders = layersToDelete.map(() => '?').join(',');
                 await runQuery(`DELETE FROM strategy_layers WHERE id IN (${placeholders})`, layersToDelete);
             }
-
-            insertLayerStmt.finalize();
-            updateLayerStmt.finalize();
-            deleteTargetsInLayerStmt.finalize();
-            insertTargetStmt.finalize();
 
             return { success: true, id };
         });
