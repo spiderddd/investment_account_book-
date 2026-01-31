@@ -1,42 +1,23 @@
-import React, { useState, useMemo, useEffect } from 'react';
+
+import React, { useState, useEffect } from 'react';
 import { 
-  Search, Plus, Trash2, Edit2, Coins, Briefcase, Landmark, TrendingUp, Wallet, X, Save, AlertCircle, ChevronDown, Clock, History, BarChart2, Eye, EyeOff, Layers, LayoutGrid, HelpCircle, Loader2
+  Search, Plus, Trash2, Edit2, History, BarChart2, Eye, EyeOff, Layers, LayoutGrid, AlertCircle, X, Save, TrendingUp, Loader2, Clock, ChevronDown
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, Legend 
 } from 'recharts';
 import { Asset, AssetCategory, SnapshotItem, StrategyVersion } from '../types';
 import { StorageService } from '../services/storageService';
+import { useAssetGrouping } from '../hooks/useAssetGrouping';
 
 interface AssetManagerProps {
   assets: Asset[];
   snapshots: SnapshotItem[];
-  strategies: StrategyVersion[]; // Added strategies
-  onUpdate: () => void; // Trigger reload in parent
+  strategies: StrategyVersion[]; 
+  onUpdate: () => void; 
   onCreate: (asset: Partial<Asset>) => Promise<void>;
   onEdit: (id: string, asset: Partial<Asset>) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
-}
-
-const CATEGORIES: { value: AssetCategory; label: string; icon: any; color: string }[] = [
-  { value: 'security', label: '股票/证券', icon: TrendingUp, color: 'text-blue-600 bg-blue-50' },
-  { value: 'fund', label: '基金/ETF', icon: Briefcase, color: 'text-indigo-600 bg-indigo-50' },
-  { value: 'wealth', label: '银行理财', icon: Landmark, color: 'text-cyan-600 bg-cyan-50' },
-  { value: 'gold', label: '黄金/商品', icon: Coins, color: 'text-amber-600 bg-amber-50' },
-  { value: 'fixed', label: '现金/存款', icon: Wallet, color: 'text-slate-600 bg-slate-50' },
-  { value: 'crypto', label: '加密货币', icon: Briefcase, color: 'text-purple-600 bg-purple-50' }, 
-  { value: 'other', label: '其他资产', icon: Briefcase, color: 'text-pink-600 bg-pink-50' },
-];
-
-const LAYER_COLORS = ['text-blue-600 bg-blue-50', 'text-amber-600 bg-amber-50', 'text-emerald-600 bg-emerald-50', 'text-rose-600 bg-rose-50', 'text-purple-600 bg-purple-50'];
-
-interface AssetPerformance {
-  quantity: number;
-  marketValue: number;
-  totalCost: number;
-  unitPrice: number;
-  date: string; // The date of this record
-  isHistorical: boolean; // True if this is from a past snapshot
 }
 
 interface AssetHistoryRecord {
@@ -51,23 +32,18 @@ interface AssetHistoryRecord {
   addedPrincipal: number;
 }
 
-interface DisplaySection {
-    id: string;
-    label: string;
-    icon: any;
-    color: string;
-    items: Asset[];
-}
-
 export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, strategies, onUpdate, onCreate, onEdit, onDelete }) => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [showHeldOnly, setShowHeldOnly] = useState(false);
-  
-  // Grouping Mode
-  const [groupBy, setGroupBy] = useState<'category' | 'layer'>('category');
-  
-  // Date Selection State
-  const [selectedDate, setSelectedDate] = useState<string>('latest');
+  const {
+      searchTerm, setSearchTerm,
+      showHeldOnly, setShowHeldOnly,
+      groupBy, setGroupBy,
+      selectedDate, setSelectedDate,
+      availableDates,
+      activeStrategy,
+      assetPerformanceMap,
+      displaySections,
+      CATEGORIES
+  } = useAssetGrouping(assets, snapshots, strategies);
 
   // Edit Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -82,202 +58,12 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
   const [historyData, setHistoryData] = useState<AssetHistoryRecord[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
-  // Available Dates for Dropdown
-  const availableDates = useMemo(() => {
-    return snapshots
-      .map(s => s.date)
-      .sort((a, b) => b.localeCompare(a)); // Descending
-  }, [snapshots]);
-
-  const activeStrategy = useMemo(() => {
-      // Find active or latest
-      return strategies.find(s => s.status === 'active') || strategies[strategies.length - 1];
-  }, [strategies]);
-
-  // --- Data Logic: Performance Map (Snapshots -> Current Status) ---
-  const viewSnapshot = useMemo(() => {
-    if (!snapshots || snapshots.length === 0) return null;
-    if (selectedDate === 'latest') {
-        return [...snapshots].sort((a, b) => b.date.localeCompare(a.date))[0];
-    }
-    return snapshots.find(s => s.date === selectedDate) || null;
-  }, [snapshots, selectedDate]);
-
-  const assetPerformanceMap = useMemo(() => {
-    const map = new Map<string, AssetPerformance>();
-    
-    // Core function to merge snapshot data into the map
-    const processSnapshot = (s: SnapshotItem, isHist: boolean) => {
-        s.assets.forEach(a => {
-            if (a.quantity > 0) {
-                const existing = map.get(a.assetId);
-
-                // Check if we need to aggregate (Same Date means same snapshot context, likely split across strategy layers)
-                // If dates match, it means we have multiple records for the same asset in one snapshot. We must SUM them.
-                if (existing && existing.date === s.date) {
-                    const totalQ = existing.quantity + a.quantity;
-                    const totalMV = existing.marketValue + a.marketValue;
-                    const totalCost = existing.totalCost + a.totalCost;
-                    
-                    map.set(a.assetId, {
-                        quantity: totalQ,
-                        marketValue: totalMV,
-                        totalCost: totalCost,
-                        // Recalculate implied unit price
-                        unitPrice: totalQ > 0 ? totalMV / totalQ : a.unitPrice, 
-                        date: s.date,
-                        isHistorical: isHist
-                    });
-                } else {
-                    // New entry OR Overwriting an OLDER entry (since we iterate chronologically usually, or if logic dictates replacement)
-                    // In "Latest" mode below, we iterate all sorted snapshots. Later dates overwrite earlier dates.
-                    // This is correct behavior to get the "Final State".
-                    map.set(a.assetId, {
-                        quantity: a.quantity,
-                        marketValue: a.marketValue,
-                        totalCost: a.totalCost,
-                        unitPrice: a.unitPrice,
-                        date: s.date,
-                        isHistorical: isHist
-                    });
-                }
-            }
-        });
-    };
-
-    if (selectedDate !== 'latest') {
-        if (viewSnapshot) processSnapshot(viewSnapshot, false);
-    } else {
-        // "Latest" Mode logic
-        // We iterate ALL snapshots from oldest to newest. 
-        // This ensures the map ends up with the latest state for every asset ever held.
-        // If an asset was held in Jan but sold in Feb, the Jan record remains in the map (marked historical), 
-        // but Feb record (if quantity > 0) would overwrite it.
-        const sorted = [...snapshots].sort((a, b) => a.date.localeCompare(b.date));
-        sorted.forEach(s => {
-            // We mark all as historical first; the final result's 'isHistorical' flag isn't strictly used for 
-            // "held right now" check in the loop, but we correct it for the very latest snapshot below.
-            processSnapshot(s, true); 
-        });
-
-        // After building the full history map, check if the asset actually exists in the *latest* snapshot.
-        // If it does, mark isHistorical = false.
-        if (sorted.length > 0) {
-            const latest = sorted[sorted.length - 1];
-            // We do a pass on the latest snapshot again to strictly ensure 'isHistorical' is false
-            // and to ensure any aggregation for the latest month is finalized correctly.
-            // Note: The loop above already added latest data, but let's ensure the flag is correct.
-            latest.assets.forEach(a => {
-                if (a.quantity > 0 && map.has(a.assetId)) {
-                   const rec = map.get(a.assetId)!;
-                   if (rec.date === latest.date) {
-                       rec.isHistorical = false;
-                   }
-                }
-            });
-        }
-    }
-    return map;
-  }, [snapshots, selectedDate, viewSnapshot]);
-
-  // --- Data Logic: Grouping and Filtering ---
-  const displaySections: DisplaySection[] = useMemo(() => {
-    let sections: DisplaySection[] = [];
-
-    // 1. Prepare Sections Structure
-    if (groupBy === 'category') {
-        sections = CATEGORIES.map(c => ({
-            id: c.value,
-            label: c.label,
-            icon: c.icon,
-            color: c.color,
-            items: []
-        }));
-    } else {
-        // Group by Layer
-        if (activeStrategy && activeStrategy.layers) {
-            sections = activeStrategy.layers.map((l, idx) => ({
-                id: l.id,
-                label: l.name,
-                icon: Layers,
-                color: LAYER_COLORS[idx % LAYER_COLORS.length],
-                items: []
-            }));
-        }
-        // Always add "Others" at the end
-        sections.push({
-            id: 'unassigned',
-            label: '未分配 / 其他',
-            icon: HelpCircle,
-            color: 'text-slate-400 bg-slate-100',
-            items: []
-        });
-    }
-
-    // 2. Build Asset ID -> Section Map
-    const assetToSectionMap = new Map<string, string>(); // AssetID -> SectionID
-
-    if (groupBy === 'layer' && activeStrategy) {
-        activeStrategy.layers.forEach(l => {
-            l.items.forEach(t => {
-                assetToSectionMap.set(t.assetId, l.id);
-            });
-        });
-    }
-
-    // 3. Assign Assets to Sections
-    assets.forEach(asset => {
-        // Filter: Search
-        const matchesSearch = asset.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                              (asset.ticker && asset.ticker.toLowerCase().includes(searchTerm.toLowerCase()));
-        if (!matchesSearch) return;
-
-        // Filter: Held Only
-        if (showHeldOnly && !assetPerformanceMap.has(asset.id)) {
-            return;
-        }
-
-        // Determine Section
-        let sectionIndex = -1;
-        
-        if (groupBy === 'category') {
-             sectionIndex = sections.findIndex(s => s.id === asset.type);
-        } else {
-             const layerId = assetToSectionMap.get(asset.id);
-             if (layerId) {
-                 sectionIndex = sections.findIndex(s => s.id === layerId);
-             } else {
-                 sectionIndex = sections.length - 1; // Unassigned
-             }
-        }
-
-        if (sectionIndex !== -1) {
-            sections[sectionIndex].items.push(asset);
-        }
-    });
-
-    // 4. Sort assets inside each group by Market Value Desc
-    sections.forEach(sec => {
-        sec.items.sort((a, b) => {
-            const valA = assetPerformanceMap.get(a.id)?.marketValue || 0;
-            const valB = assetPerformanceMap.get(b.id)?.marketValue || 0;
-            return valB - valA; // High to Low
-        });
-    });
-
-    // 5. Filter empty sections
-    return sections.filter(s => s.items.length > 0);
-
-  }, [assets, searchTerm, assetPerformanceMap, showHeldOnly, groupBy, activeStrategy]);
-
   // --- Async Data Fetching for History ---
   useEffect(() => {
     if (viewHistoryId) {
         setLoadingHistory(true);
         StorageService.getAssetHistory(viewHistoryId)
             .then(data => {
-                // Process and Aggregation Logic handled here instead of useMemo on all snapshots
-                // API returns raw rows. If there are multiple entries per month (e.g. split in strategy), we should aggregate them by date.
                 const aggMap = new Map<string, AssetHistoryRecord>();
                 
                 data.forEach((row: any) => {
@@ -288,7 +74,6 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                         existing.totalCost += row.totalCost;
                         existing.addedQuantity += row.addedQuantity;
                         existing.addedPrincipal += row.addedPrincipal;
-                        // Recalculate derived fields
                         existing.profit = existing.marketValue - existing.totalCost;
                         existing.roi = existing.totalCost > 0 ? (existing.profit / existing.totalCost * 100) : 0;
                         existing.unitPrice = existing.quantity > 0 ? existing.marketValue / existing.quantity : row.unitPrice;
@@ -307,7 +92,6 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                     }
                 });
                 
-                // Convert map to array and sort
                 const sortedHistory = Array.from(aggMap.values()).sort((a, b) => a.date.localeCompare(b.date));
                 setHistoryData(sortedHistory);
             })
@@ -551,7 +335,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
 
       {/* Vertical Stack Layout */}
       <div className="space-y-6">
-        {displaySections.map(section => (
+        {displaySections.map((section: any) => (
             <div key={section.id} className="bg-slate-50/50 rounded-xl border border-slate-100 p-4">
                 {/* Section Header */}
                 <div className="flex items-center gap-2 mb-4 pb-2 border-b border-slate-200/60">
@@ -566,7 +350,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
 
                 {/* Responsive Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {section.items.map(asset => renderAssetCard(asset))}
+                    {section.items.map((asset: Asset) => renderAssetCard(asset))}
                 </div>
             </div>
         ))}

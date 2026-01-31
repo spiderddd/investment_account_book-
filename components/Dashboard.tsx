@@ -1,76 +1,32 @@
-import React, { useMemo, useState } from 'react';
+
+import React from 'react';
 import { 
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend 
 } from 'recharts';
 import { TrendingUp, DollarSign, Activity, Wallet, History, Calendar, Filter, ArrowRight, ChevronRight, ArrowLeft, Layers } from 'lucide-react';
 import { StrategyVersion, SnapshotItem } from '../types';
-import { 
-    getStrategyForDate, 
-    getSnapshotMetrics, 
-    calculateAllocationData, 
-    calculateHistoryData, 
-    calculateBreakdownData 
-} from '../utils/calculators';
+import { useDashboardData } from '../hooks/useDashboardData';
 
 interface DashboardProps {
   strategies: StrategyVersion[]; 
   snapshots: SnapshotItem[];
 }
 
-type ViewMode = 'strategy' | 'total';
-type TimeRange = 'all' | 'ytd' | '1y';
-
 const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }) => {
-  const [viewMode, setViewMode] = useState<ViewMode>('strategy');
-  const [timeRange, setTimeRange] = useState<TimeRange>('all');
-  
-  // Drill-down State: If null, show Layers (Level 1). If set, show Assets in that Layer (Level 2).
-  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
-
-  // --- Date Filtering & Baseline Logic ---
-  const sortedAllSnapshots = useMemo(() => {
-    return [...snapshots].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [snapshots]);
-
-  const rangeConfig = useMemo(() => {
-    if (timeRange === 'all') return { startDate: null, label: '历史累计' };
-    const now = new Date();
-    let start = new Date();
-    if (timeRange === 'ytd') {
-      start = new Date(now.getFullYear(), 0, 1);
-      return { startDate: start.toISOString().slice(0, 7), label: '今年以来' };
-    } else {
-      start = new Date(now);
-      start.setFullYear(now.getFullYear() - 1); 
-      return { startDate: start.toISOString().slice(0, 7), label: '近一年' };
-    }
-  }, [timeRange]);
-
-  const filteredSnapshots = useMemo(() => {
-    if (!rangeConfig.startDate) return sortedAllSnapshots;
-    return sortedAllSnapshots.filter(s => s.date >= rangeConfig.startDate!);
-  }, [sortedAllSnapshots, rangeConfig]);
-
-  const { startSnapshot, endSnapshot } = useMemo(() => {
-    if (sortedAllSnapshots.length === 0) return { startSnapshot: null, endSnapshot: null };
-    const end = filteredSnapshots[filteredSnapshots.length - 1] || sortedAllSnapshots[sortedAllSnapshots.length - 1];
-    if (timeRange === 'all') return { startSnapshot: null, endSnapshot: end };
-    const firstInWindow = filteredSnapshots[0];
-    if (!firstInWindow) return { startSnapshot: null, endSnapshot: end };
-    const idx = sortedAllSnapshots.findIndex(s => s.id === firstInWindow.id);
-    const baseline = idx > 0 ? sortedAllSnapshots[idx - 1] : null;
-    return { startSnapshot: baseline, endSnapshot: end };
-  }, [sortedAllSnapshots, filteredSnapshots, timeRange]);
-
-  const activeStrategyEnd = useMemo(() => {
-      if (!endSnapshot) return null;
-      return getStrategyForDate(versions, endSnapshot.date);
-  }, [versions, endSnapshot]);
-
-  // --- Metrics Calculation ---
-  const endMetrics = useMemo(() => getSnapshotMetrics(endSnapshot, viewMode, versions), [endSnapshot, viewMode, versions]);
-  const startMetrics = useMemo(() => getSnapshotMetrics(startSnapshot, viewMode, versions), [startSnapshot, viewMode, versions]);
+  const {
+    viewMode, setViewMode,
+    timeRange, setTimeRange,
+    selectedLayerId, setSelectedLayerId,
+    rangeConfig,
+    startSnapshot, endSnapshot,
+    endMetrics, startMetrics,
+    activeStrategyEnd,
+    allocationData,
+    historyData,
+    breakdownData,
+    breakdownTotals
+  } = useDashboardData(versions, snapshots);
 
   const displayValue = endMetrics.value;
   const displayInvested = endMetrics.invested; 
@@ -79,34 +35,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
     : (endMetrics.value - endMetrics.invested) - (startMetrics.value - startMetrics.invested);
   const returnRate = displayInvested > 0 ? (periodProfit / displayInvested) * 100 : 0;
 
-  const selectedLayerInfo = useMemo(() => {
-    if (!activeStrategyEnd || !selectedLayerId) return null;
-    return activeStrategyEnd.layers.find(l => l.id === selectedLayerId);
-  }, [activeStrategyEnd, selectedLayerId]);
-
-  // --- Chart Data Calculation (Delegated to Pure Functions) ---
-  
-  const allocationData = useMemo(() => {
-      return calculateAllocationData(endSnapshot, activeStrategyEnd, viewMode, selectedLayerId);
-  }, [endSnapshot, activeStrategyEnd, viewMode, selectedLayerId]);
-
-  const historyData = useMemo(() => {
-      return calculateHistoryData(filteredSnapshots, versions, viewMode, selectedLayerId, activeStrategyEnd);
-  }, [filteredSnapshots, versions, viewMode, selectedLayerId, activeStrategyEnd]);
-
-  const breakdownData = useMemo(() => {
-      return calculateBreakdownData(startSnapshot, endSnapshot, activeStrategyEnd, viewMode, selectedLayerId);
-  }, [startSnapshot, endSnapshot, activeStrategyEnd, viewMode, selectedLayerId]);
-
-  const breakdownTotals = useMemo(() => {
-    return breakdownData.reduce((acc, row) => ({
-        endVal: acc.endVal + row.endVal,
-        endCost: acc.endCost + row.endCost,
-        changeVal: acc.changeVal + row.changeVal,
-        changeInput: acc.changeInput + row.changeInput,
-        profit: acc.profit + row.profit
-    }), { endVal: 0, endCost: 0, changeVal: 0, changeInput: 0, profit: 0 });
-  }, [breakdownData]);
+  const selectedLayerInfo = activeStrategyEnd?.layers.find(l => l.id === selectedLayerId);
 
   if (versions.length === 0) {
     return (
@@ -128,7 +57,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
         </div>
         <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg p-1 self-start">
            <div className="px-2 text-slate-400"><Calendar size={14} /></div>
-           {(['all', 'ytd', '1y'] as TimeRange[]).map((range) => (
+           {(['all', 'ytd', '1y'] as const).map((range) => (
              <button key={range} onClick={() => setTimeRange(range)} className={`px-3 py-1 rounded text-xs font-medium transition-colors ${timeRange === range ? 'bg-slate-900 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>
                 {range === 'all' ? '全部' : range === 'ytd' ? '今年' : '近一年'}
              </button>
