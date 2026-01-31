@@ -123,3 +123,22 @@ export const getQuery = (sql, params = []) => new Promise((resolve, reject) => {
         else resolve(rows);
     });
 });
+
+/**
+ * Executes a callback within a database transaction.
+ * Automatically handles BEGIN, COMMIT, and ROLLBACK.
+ * Returns the result of the callback.
+ */
+export const withTransaction = async (callback) => {
+    try {
+        await runQuery("BEGIN TRANSACTION");
+        const result = await callback();
+        await runQuery("COMMIT");
+        return result;
+    } catch (err) {
+        await runQuery("ROLLBACK");
+        // Log the error internally but rethrow so the route handler can send a 500
+        console.error("Transaction failed, rolled back.", err);
+        throw err;
+    }
+};
