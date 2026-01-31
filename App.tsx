@@ -1,101 +1,89 @@
-import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, PieChart, History, Wallet, Database, Wifi, Briefcase } from 'lucide-react';
+
+import React, { useState } from 'react';
+import { LayoutDashboard, PieChart, History, Wallet, Wifi, Briefcase } from 'lucide-react';
 import Dashboard from './components/Dashboard';
 import StrategyManager from './components/StrategyManager';
 import SnapshotManager from './components/SnapshotManager';
-import { AssetManager } from './components/AssetManager'; // Import new component
+import { AssetManager } from './components/AssetManager';
 import { StorageService } from './services/storageService';
 import { StrategyVersion, SnapshotItem, Asset } from './types';
+import { DataProvider, useData } from './contexts/DataContext';
 
-type View = 'dashboard' | 'strategy' | 'snapshots' | 'assets'; // Add 'assets' view
+type View = 'dashboard' | 'strategy' | 'snapshots' | 'assets';
 
-const App: React.FC = () => {
+const AppContent: React.FC = () => {
   const [activeView, setActiveView] = useState<View>('dashboard');
   
-  // Data State
-  const [assets, setAssets] = useState<Asset[]>([]);
-  const [strategyVersions, setStrategyVersions] = useState<StrategyVersion[]>([]);
-  const [snapshots, setSnapshots] = useState<SnapshotItem[]>([]);
-  
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Consume data from Context
+  const { 
+    assets, 
+    strategies, 
+    snapshots, 
+    isLoading, 
+    error, 
+    refreshAll, 
+    refreshAssets, 
+    refreshStrategies, 
+    refreshSnapshots 
+  } = useData();
 
-  // Load data from API
-  const loadData = async () => {
-    setIsLoading(true);
-    try {
-      const [fetchedAssets, fetchedStrategies, fetchedSnapshots] = await Promise.all([
-        StorageService.getAssets(),
-        StorageService.getStrategyVersions(),
-        StorageService.getSnapshots()
-      ]);
-      setAssets(fetchedAssets);
-      setStrategyVersions(fetchedStrategies);
-      setSnapshots(fetchedSnapshots);
-      setError(null);
-    } catch (err) {
-      console.error(err);
-      setError("无法连接到服务器。请确保后端服务已启动。");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  // Wrappers to refresh data after updates
+  // Wrappers to refresh specific data after updates
   const handleUpdateStrategies = async (newVersions: StrategyVersion[]) => {
       // Logic to handle Create / Update / Delete based on list diff
-      const oldIds = new Set(strategyVersions.map(v => v.id));
+      const oldIds = new Set(strategies.map(v => v.id));
       const newIds = new Set(newVersions.map(v => v.id));
 
       // 1. Handle Creates & Updates
       for (const v of newVersions) {
-          const old = strategyVersions.find(o => o.id === v.id);
+          const old = strategies.find(o => o.id === v.id);
           if (!old) {
-              // Create
               await StorageService.createStrategy(v);
           } else if (JSON.stringify(old) !== JSON.stringify(v)) {
-              // Update (Deep compare simplistic approach)
               await StorageService.updateStrategy(v);
           }
       }
 
       // 2. Handle Deletes
-      for (const old of strategyVersions) {
+      for (const old of strategies) {
           if (!newIds.has(old.id)) {
               await StorageService.deleteStrategy(old.id);
           }
       }
 
-      loadData(); 
+      // Only refresh strategies, assets and snapshots remain cached
+      await refreshStrategies();
   };
 
   const handleUpdateSnapshots = async (newSnapshots: SnapshotItem[]) => {
-     loadData(); 
+     // This callback is usually triggered by bulk updates, currently we mostly use handleSaveSnapshot
+     await refreshSnapshots();
   };
   
   const handleSaveSnapshot = async (s: SnapshotItem) => {
     await StorageService.saveSnapshotSingle(s);
-    loadData();
+    await refreshSnapshots();
   };
 
   const handleCreateAsset = async (a: Partial<Asset>) => {
     await StorageService.createAsset(a);
-    loadData();
+    await refreshAssets();
   };
 
   const handleEditAsset = async (id: string, a: Partial<Asset>) => {
     const success = await StorageService.updateAsset(id, a);
-    if (success) loadData();
+    if (success) {
+        await refreshAssets();
+        // Snapshots might contain asset names, so we refresh them too to ensure consistency
+        await refreshSnapshots();
+    }
     return success;
   };
 
   const handleDeleteAsset = async (id: string) => {
     const success = await StorageService.deleteAsset(id);
-    if (success) loadData();
+    if (success) {
+        await refreshAssets();
+    }
     return success;
   };
 
@@ -123,7 +111,7 @@ const App: React.FC = () => {
         <Wifi size={48} className="text-red-300" />
         <h2 className="text-lg font-bold text-slate-700">连接失败</h2>
         <p>{error}</p>
-        <button onClick={loadData} className="px-4 py-2 bg-blue-600 text-white rounded-lg">重试</button>
+        <button onClick={refreshAll} className="px-4 py-2 bg-blue-600 text-white rounded-lg">重试</button>
       </div>
     );
   }
@@ -173,14 +161,14 @@ const App: React.FC = () => {
       {/* Main Content */}
       <main className="max-w-5xl mx-auto px-4 md:px-6 py-6 md:py-10">
         {activeView === 'dashboard' && (
-          <Dashboard strategies={strategyVersions} snapshots={snapshots} />
+          <Dashboard strategies={strategies} snapshots={snapshots} />
         )}
         {activeView === 'assets' && (
           <AssetManager 
             assets={assets}
             snapshots={snapshots}
-            strategies={strategyVersions}
-            onUpdate={loadData}
+            strategies={strategies}
+            onUpdate={refreshAssets}
             onCreate={handleCreateAsset}
             onEdit={handleEditAsset}
             onDelete={handleDeleteAsset}
@@ -188,7 +176,7 @@ const App: React.FC = () => {
         )}
         {activeView === 'strategy' && (
           <StrategyManager 
-            strategies={strategyVersions} 
+            strategies={strategies} 
             assets={assets}
             onUpdate={handleUpdateStrategies} 
           />
@@ -196,7 +184,7 @@ const App: React.FC = () => {
         {activeView === 'snapshots' && (
           <SnapshotManager 
             snapshots={snapshots} 
-            strategies={strategyVersions} 
+            strategies={strategies} 
             assets={assets}
             onUpdate={handleUpdateSnapshots} 
             onSave={handleSaveSnapshot}
@@ -215,6 +203,15 @@ const App: React.FC = () => {
       
       <div className="h-20 md:hidden"></div>
     </div>
+  );
+};
+
+// Main Entry Point wrapped in Provider
+const App: React.FC = () => {
+  return (
+    <DataProvider>
+      <AppContent />
+    </DataProvider>
   );
 };
 

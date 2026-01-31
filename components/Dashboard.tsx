@@ -1,12 +1,17 @@
-
 import React, { useMemo, useState } from 'react';
 import { 
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend 
 } from 'recharts';
-import { TrendingUp, DollarSign, Activity, Wallet, History, Calendar, Filter, ArrowRight, ChevronRight, ArrowLeft, Layers, CornerDownRight } from 'lucide-react';
-import { StrategyVersion, SnapshotItem, StrategyTarget } from '../types';
-import { StorageService } from '../services/storageService';
+import { TrendingUp, DollarSign, Activity, Wallet, History, Calendar, Filter, ArrowRight, ChevronRight, ArrowLeft, Layers } from 'lucide-react';
+import { StrategyVersion, SnapshotItem } from '../types';
+import { 
+    getStrategyForDate, 
+    getSnapshotMetrics, 
+    calculateAllocationData, 
+    calculateHistoryData, 
+    calculateBreakdownData 
+} from '../utils/calculators';
 
 interface DashboardProps {
   strategies: StrategyVersion[]; 
@@ -15,15 +20,6 @@ interface DashboardProps {
 
 type ViewMode = 'strategy' | 'total';
 type TimeRange = 'all' | 'ytd' | '1y';
-
-const LAYER_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#64748b'];
-
-const CATEGORY_COLORS: Record<string, string> = {
-  '股票基金': '#3b82f6', 
-  '商品另类': '#f59e0b', 
-  '现金固收': '#64748b', 
-  '其他': '#a855f7'
-};
 
 const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('strategy');
@@ -67,43 +63,15 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
     return { startSnapshot: baseline, endSnapshot: end };
   }, [sortedAllSnapshots, filteredSnapshots, timeRange]);
 
-  // --- Strategy Mapping Helper ---
-  // Create a Map: AssetID -> StrategyTarget for the given strategy version
-  const getAssetTargetMap = (strategy: StrategyVersion | null) => {
-      const map = new Map<string, { target: StrategyTarget, layerId: string }>();
-      if (!strategy) return map;
-      strategy.layers.forEach(layer => {
-          layer.items.forEach(target => {
-              map.set(target.assetId, { target, layerId: layer.id });
-          });
-      });
-      return map;
-  };
-
   const activeStrategyEnd = useMemo(() => {
       if (!endSnapshot) return null;
-      return StorageService.getStrategyForDate(versions, endSnapshot.date);
+      return getStrategyForDate(versions, endSnapshot.date);
   }, [versions, endSnapshot]);
 
-  const assetTargetMapEnd = useMemo(() => getAssetTargetMap(activeStrategyEnd), [activeStrategyEnd]);
+  // --- Metrics Calculation ---
+  const endMetrics = useMemo(() => getSnapshotMetrics(endSnapshot, viewMode, versions), [endSnapshot, viewMode, versions]);
+  const startMetrics = useMemo(() => getSnapshotMetrics(startSnapshot, viewMode, versions), [startSnapshot, viewMode, versions]);
 
-  const getSnapshotMetrics = (s: SnapshotItem | null) => {
-    if (!s) return { value: 0, invested: 0 };
-    if (viewMode === 'total') {
-      return { value: s.totalValue, invested: s.totalInvested };
-    } else {
-      // DYNAMIC CALCULATION: Only sum assets that exist in the active strategy for THIS snapshot
-      const strat = StorageService.getStrategyForDate(versions, s.date);
-      const map = getAssetTargetMap(strat);
-      
-      const value = s.assets.filter(a => map.has(a.assetId)).reduce((sum, a) => sum + a.marketValue, 0);
-      const invested = s.assets.filter(a => map.has(a.assetId)).reduce((sum, a) => sum + a.totalCost, 0);
-      return { value, invested };
-    }
-  };
-
-  const endMetrics = getSnapshotMetrics(endSnapshot);
-  const startMetrics = getSnapshotMetrics(startSnapshot);
   const displayValue = endMetrics.value;
   const displayInvested = endMetrics.invested; 
   const periodProfit = timeRange === 'all' 
@@ -116,253 +84,19 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
     return activeStrategyEnd.layers.find(l => l.id === selectedLayerId);
   }, [activeStrategyEnd, selectedLayerId]);
 
-  // --- Chart Data Calculation ---
+  // --- Chart Data Calculation (Delegated to Pure Functions) ---
+  
   const allocationData = useMemo(() => {
-    if (!endSnapshot) return [];
-    
-    if (viewMode === 'strategy') {
-      if (!activeStrategyEnd) return [];
-      const stratTotal = endMetrics.value; 
-
-      if (selectedLayerId === null) {
-          // --- Level 1: Layer View (Root) ---
-          return activeStrategyEnd.layers.map((layer, idx) => {
-              // Sum up assets in snapshot that belong to this layer
-              const layerActualValue = endSnapshot.assets.reduce((sum, asset) => {
-                  const mapping = assetTargetMapEnd.get(asset.assetId);
-                  if (mapping && mapping.layerId === layer.id) {
-                      return sum + asset.marketValue;
-                  }
-                  return sum;
-              }, 0);
-
-              const actualPercent = stratTotal > 0 ? (layerActualValue / stratTotal) * 100 : 0;
-              
-              return {
-                  id: layer.id,
-                  name: layer.name,
-                  value: layerActualValue,
-                  percent: parseFloat(actualPercent.toFixed(1)),
-                  targetPercent: layer.weight,
-                  color: LAYER_COLORS[idx % LAYER_COLORS.length],
-                  deviation: actualPercent - layer.weight,
-                  isLayer: true // Flag for click handler
-              };
-          }).sort((a, b) => b.targetPercent - a.targetPercent);
-
-      } else {
-          // --- Level 2: Asset View (Drill Down) ---
-          const layer = activeStrategyEnd.layers.find(l => l.id === selectedLayerId);
-          if (!layer) return [];
-
-          // Helper: Get actual value of a target in current snapshot
-          const getTargetActualValue = (target: StrategyTarget) => {
-              // Note: There could be multiple records for one assetId (though unlikely in V2), so we filter and sum
-              const assets = endSnapshot.assets.filter(a => a.assetId === target.assetId);
-              return assets.reduce((sum, a) => sum + a.marketValue, 0);
-          };
-
-          const layerTotalValue = layer.items.reduce((sum, t) => sum + getTargetActualValue(t), 0);
-          
-          // Calculate Auto Weights logic for this layer
-          const fixedItems = layer.items.filter(t => t.weight >= 0);
-          const autoItems = layer.items.filter(t => t.weight === -1);
-          const usedWeight = fixedItems.reduce((sum, t) => sum + t.weight, 0);
-          const remainingWeight = Math.max(0, 100 - usedWeight);
-          const calculatedAutoWeight = autoItems.length > 0 ? (remainingWeight / autoItems.length) : 0;
-
-          return layer.items.map(t => {
-            const actualValue = getTargetActualValue(t);
-            // Internal Percentage: % of the Layer's total value
-            const actualInnerPercent = layerTotalValue > 0 ? (actualValue / layerTotalValue) * 100 : 0;
-            const targetInnerPercent = t.weight === -1 ? calculatedAutoWeight : t.weight;
-
-            return {
-              id: t.id,
-              name: t.targetName,
-              value: actualValue,
-              percent: parseFloat(actualInnerPercent.toFixed(1)),
-              targetPercent: parseFloat(targetInnerPercent.toFixed(1)),
-              color: t.color,
-              deviation: actualInnerPercent - targetInnerPercent,
-              isLayer: false
-            };
-          }).sort((a, b) => b.value - a.value);
-      }
-
-    } else {
-      // --- Total View (Unchanged logic for Asset Categories) ---
-      const grouped = endSnapshot.assets.reduce((acc, curr) => {
-        let cat = '其他';
-        switch (curr.category) {
-          case 'security': case 'fund': cat = '股票基金'; break;
-          case 'fixed': case 'wealth': cat = '现金固收'; break;
-          case 'gold': case 'crypto': cat = '商品另类'; break;
-          default: cat = '其他';
-        }
-        acc[cat] = (acc[cat] || 0) + curr.marketValue;
-        return acc;
-      }, {} as Record<string, number>);
-
-      return Object.keys(grouped).map(key => ({
-        name: key,
-        value: grouped[key],
-        percent: parseFloat(((grouped[key] / endMetrics.value) * 100).toFixed(1)),
-        color: CATEGORY_COLORS[key] || '#cbd5e1'
-      })).sort((a, b) => b.value - a.value);
-    }
-  }, [activeStrategyEnd, endSnapshot, endMetrics, viewMode, selectedLayerId, assetTargetMapEnd]);
+      return calculateAllocationData(endSnapshot, activeStrategyEnd, viewMode, selectedLayerId);
+  }, [endSnapshot, activeStrategyEnd, viewMode, selectedLayerId]);
 
   const historyData = useMemo(() => {
-    // Determine scope of assets to include in history
-    let targetAssetIds: Set<string> | null = null;
-    
-    // For historical Strategy View, we must determine which assets belonged to the SELECTED Layer *AT THAT TIME*?
-    // OR, simpler: just use the *Current* Active Strategy's definition of that layer?
-    // Using current strategy definition is standard for "Backtesting" logic.
-    if (viewMode === 'strategy' && selectedLayerId && activeStrategyEnd) {
-       const layer = activeStrategyEnd.layers.find(l => l.id === selectedLayerId);
-       if (layer) {
-           targetAssetIds = new Set(layer.items.map(i => i.assetId));
-       }
-    }
+      return calculateHistoryData(filteredSnapshots, versions, viewMode, selectedLayerId, activeStrategyEnd);
+  }, [filteredSnapshots, versions, viewMode, selectedLayerId, activeStrategyEnd]);
 
-    return filteredSnapshots.map(s => {
-      let val = 0;
-      let inv = 0;
-      
-      if (viewMode === 'strategy') {
-          // For strategy history, we dynamically calculate based on the strategy active AT THAT TIME
-          const stratAtTime = StorageService.getStrategyForDate(versions, s.date);
-          const mapAtTime = getAssetTargetMap(stratAtTime);
-
-          if (targetAssetIds) {
-              // If filtering by Layer, we check if the asset matches the Current Selected Layer Assets
-              // Limitation: If assets moved between layers in history, this strictly follows "Current Layer Composition"
-              const assets = s.assets.filter(a => targetAssetIds!.has(a.assetId) && mapAtTime.has(a.assetId));
-              val = assets.reduce((sum, a) => sum + a.marketValue, 0);
-              inv = assets.reduce((sum, a) => sum + a.totalCost, 0);
-          } else {
-              // Total Strategy History (Dynamic)
-              const assets = s.assets.filter(a => mapAtTime.has(a.assetId));
-              val = assets.reduce((sum, a) => sum + a.marketValue, 0);
-              inv = assets.reduce((sum, a) => sum + a.totalCost, 0);
-          }
-      } else {
-          // Total View
-          val = s.totalValue;
-          inv = s.totalInvested;
-      }
-
-      return {
-        date: s.date,
-        value: val,
-        invested: inv
-      };
-    });
-  }, [filteredSnapshots, viewMode, selectedLayerId, activeStrategyEnd, versions]);
-
-  // --- Breakdown Table Data ---
   const breakdownData = useMemo(() => {
-    if (!endSnapshot) return [];
-    if (viewMode === 'strategy' && !activeStrategyEnd) return [];
-
-    const startSnap = startSnapshot; 
-    
-    // Helper to get stats for a list of Asset IDs
-    const getStats = (s: SnapshotItem | null, assetIds: Set<string>) => {
-        if (!s) return { v: 0, c: 0 };
-        const relevant = s.assets.filter(a => assetIds.has(a.assetId));
-        return {
-            v: relevant.reduce((sum, a) => sum + a.marketValue, 0),
-            c: relevant.reduce((sum, a) => sum + a.totalCost, 0)
-        };
-    };
-
-    if (viewMode === 'total') {
-        // --- Total View: Group by Category ---
-        const categories = ['股票基金', '现金固收', '商品另类', '其他'];
-        const catMap: Record<string, string> = {
-            'security': '股票基金', 'fund': '股票基金',
-            'fixed': '现金固收', 'wealth': '现金固收',
-            'gold': '商品另类', 'crypto': '商品另类',
-            'other': '其他'
-        };
-
-        const calcCatStats = (s: SnapshotItem | null) => {
-            const res: Record<string, { v: number, c: number }> = {};
-            categories.forEach(c => res[c] = { v: 0, c: 0 });
-            if (!s) return res;
-            
-            s.assets.forEach(a => {
-                const cat = catMap[a.category] || '其他';
-                if (res[cat]) {
-                    res[cat].v += a.marketValue;
-                    res[cat].c += a.totalCost;
-                }
-            });
-            return res;
-        };
-
-        const endStats = calcCatStats(endSnapshot);
-        const startStats = calcCatStats(startSnap);
-
-        return categories.map(cat => {
-            const end = endStats[cat];
-            const start = startStats[cat];
-             return {
-                id: cat,
-                name: cat,
-                color: CATEGORY_COLORS[cat] || '#cbd5e1',
-                endVal: end.v,
-                endCost: end.c,
-                changeVal: end.v - start.v,
-                changeInput: end.c - start.c,
-                profit: (end.v - end.c) - (start.v - start.c)
-            };
-        }).filter(r => r.endVal > 0 || Math.abs(r.changeVal) > 0 || Math.abs(r.profit) > 0).sort((a,b) => b.endVal - a.endVal);
-
-    } else if (selectedLayerId) {
-        // --- Strategy View: ASSETS Breakdown (Drill Down) ---
-        const layer = activeStrategyEnd!.layers.find(l => l.id === selectedLayerId);
-        if (!layer) return [];
-        
-        return layer.items.map(item => {
-            const assetIds = new Set<string>([item.assetId]);
-            const end = getStats(endSnapshot, assetIds);
-            const start = getStats(startSnap, assetIds);
-            
-            return {
-                id: item.id,
-                name: item.targetName,
-                color: item.color,
-                endVal: end.v,
-                endCost: end.c, 
-                changeVal: end.v - start.v,
-                changeInput: end.c - start.c,
-                profit: (end.v - end.c) - (start.v - start.c)
-            };
-        }).sort((a,b) => b.endVal - a.endVal);
-    } else {
-        // --- Strategy View: LAYERS Breakdown (Top Level) ---
-        return activeStrategyEnd!.layers.map((layer, idx) => {
-            const assetIds = new Set<string>(layer.items.map(i => i.assetId));
-            const end = getStats(endSnapshot, assetIds);
-            const start = getStats(startSnap, assetIds);
-            
-            return {
-                id: layer.id,
-                name: layer.name,
-                color: LAYER_COLORS[idx % LAYER_COLORS.length],
-                endVal: end.v,
-                endCost: end.c,
-                changeVal: end.v - start.v,
-                changeInput: end.c - start.c,
-                profit: (end.v - end.c) - (start.v - start.c)
-            };
-        });
-    }
-  }, [viewMode, selectedLayerId, activeStrategyEnd, endSnapshot, startSnapshot]);
+      return calculateBreakdownData(startSnapshot, endSnapshot, activeStrategyEnd, viewMode, selectedLayerId);
+  }, [startSnapshot, endSnapshot, activeStrategyEnd, viewMode, selectedLayerId]);
 
   const breakdownTotals = useMemo(() => {
     return breakdownData.reduce((acc, row) => ({
@@ -496,7 +230,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
                     label={({ payload }) => `${payload.percent}%`} 
                     labelLine={{ stroke: '#cbd5e1', strokeWidth: 1 }}
                   >
-                    {allocationData.map((entry, index) => <Cell key={`cell-${index}`} fill={entry.color} stroke="white" strokeWidth={2} />)}
+                    {allocationData.map((entry: any, index: number) => <Cell key={`cell-${index}`} fill={entry.color} stroke="white" strokeWidth={2} />)}
                   </Pie>
                   <RechartsTooltip formatter={(value: number) => `¥${value.toLocaleString()}`} />
                 </PieChart>
@@ -619,7 +353,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-50">
-                              {breakdownData.map(row => {
+                              {breakdownData.map((row: any) => {
                                   const roi = row.endCost > 0 ? (row.profit / row.endCost) * 100 : 0;
                                   return (
                                   <tr key={row.id} className="group hover:bg-slate-50 transition-colors">

@@ -3,17 +3,33 @@ import { StrategyVersion, SnapshotItem, Asset } from '../types';
 
 const API_BASE = '/api'; 
 
+// Simple in-memory cache
+interface CacheStore {
+  assets: Asset[] | null;
+  strategies: StrategyVersion[] | null;
+  snapshots: SnapshotItem[] | null;
+}
+
+const cache: CacheStore = {
+  assets: null,
+  strategies: null,
+  snapshots: null
+};
+
 export const generateId = (): string => {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
 };
 
 export const StorageService = {
   // --- Assets ---
-  getAssets: async (): Promise<Asset[]> => {
+  getAssets: async (forceRefresh = false): Promise<Asset[]> => {
+    if (!forceRefresh && cache.assets) return cache.assets;
     try {
       const res = await fetch(`${API_BASE}/assets`);
       if (!res.ok) throw new Error('Failed to fetch assets');
-      return await res.json();
+      const data = await res.json();
+      cache.assets = data;
+      return data;
     } catch (e) { console.error(e); return []; }
   },
 
@@ -24,7 +40,9 @@ export const StorageService = {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(asset)
       });
-      return await res.json();
+      const data = await res.json();
+      cache.assets = null; // Invalidate cache
+      return data;
     } catch (e) { console.error(e); return null; }
   },
 
@@ -35,6 +53,7 @@ export const StorageService = {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(asset)
       });
+      if (res.ok) cache.assets = null; // Invalidate cache
       return res.ok;
     } catch (e) { console.error(e); return false; }
   },
@@ -42,11 +61,12 @@ export const StorageService = {
   deleteAsset: async (id: string): Promise<boolean> => {
     try {
       const res = await fetch(`${API_BASE}/assets/${id}`, { method: 'DELETE' });
+      if (res.ok) cache.assets = null; // Invalidate cache
       return res.ok;
     } catch (e) { console.error(e); return false; }
   },
 
-  // NEW: Get Specific Asset History
+  // NEW: Get Specific Asset History (No Caching for now as it's on-demand)
   getAssetHistory: async (assetId: string): Promise<any[]> => {
     try {
         const res = await fetch(`${API_BASE}/assets/${assetId}/history`);
@@ -56,11 +76,14 @@ export const StorageService = {
   },
 
   // --- Strategies ---
-  getStrategyVersions: async (): Promise<StrategyVersion[]> => {
+  getStrategyVersions: async (forceRefresh = false): Promise<StrategyVersion[]> => {
+    if (!forceRefresh && cache.strategies) return cache.strategies;
     try {
       const res = await fetch(`${API_BASE}/strategies`);
       if (!res.ok) throw new Error('Failed to fetch strategies');
-      return await res.json();
+      const data = await res.json();
+      cache.strategies = data;
+      return data;
     } catch (e) { console.error(e); return []; }
   },
 
@@ -70,6 +93,7 @@ export const StorageService = {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(strategy)
     });
+    cache.strategies = null;
   },
 
   updateStrategy: async (strategy: StrategyVersion) => {
@@ -78,25 +102,23 @@ export const StorageService = {
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(strategy)
       });
+      cache.strategies = null;
   },
 
   deleteStrategy: async (id: string) => {
       await fetch(`${API_BASE}/strategies/${id}`, { method: 'DELETE' });
-  },
-
-  getStrategyForDate: (versions: StrategyVersion[], dateStr: string): StrategyVersion | null => {
-    if (!versions || versions.length === 0) return null;
-    const sorted = [...versions].sort((a, b) => b.startDate.localeCompare(a.startDate));
-    const targetDate = dateStr.length === 7 ? `${dateStr}-31` : dateStr;
-    return sorted.find(v => v.startDate <= targetDate) || sorted[sorted.length - 1]; 
+      cache.strategies = null;
   },
 
   // --- Snapshots ---
-  getSnapshots: async (): Promise<SnapshotItem[]> => {
+  getSnapshots: async (forceRefresh = false): Promise<SnapshotItem[]> => {
+    if (!forceRefresh && cache.snapshots) return cache.snapshots;
     try {
       const res = await fetch(`${API_BASE}/snapshots`);
       if (!res.ok) throw new Error('Failed to fetch snapshots');
-      return await res.json();
+      const data = await res.json();
+      cache.snapshots = data;
+      return data;
     } catch (e) { console.error(e); return []; }
   },
 
@@ -106,6 +128,7 @@ export const StorageService = {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(snapshot)
     });
+    cache.snapshots = null;
   },
 
   // --- Helpers ---

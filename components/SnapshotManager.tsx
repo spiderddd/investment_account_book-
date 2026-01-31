@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import { Plus, Calendar, Trash2, Coins, Landmark, Briefcase, TrendingUp, DollarSign, Save, X, Activity, Search, FileText, ChevronDown, ChevronUp, ArrowRight, Wallet, Bitcoin } from 'lucide-react';
 import { SnapshotItem, StrategyVersion, AssetRecord, AssetCategory, Asset } from '../types';
 import { generateId, StorageService } from '../services/storageService';
+import { getStrategyForDate } from '../utils/calculators';
 
 interface SnapshotManagerProps {
   snapshots: SnapshotItem[];
@@ -51,7 +52,7 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
   const sortedSnapshots = [...snapshots].sort((a, b) => b.date.localeCompare(a.date));
 
   const activeStrategy = useMemo(() => {
-    return StorageService.getStrategyForDate(versions, date) || versions[versions.length - 1];
+    return getStrategyForDate(versions, date) || versions[versions.length - 1];
   }, [versions, date]);
 
   const previousSnapshot = useMemo(() => {
