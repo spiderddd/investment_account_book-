@@ -14,6 +14,7 @@ export interface AssetRowInput {
   costChange: string; 
   prevQuantity: number;
   prevCost: number;
+  note: string; // Add note support
 }
 
 export const useSnapshotForm = (
@@ -45,7 +46,6 @@ export const useSnapshotForm = (
             const refDate = existing ? existing.date : baseDate;
             
             // Optimization: Fetch previous snapshot specifically from backend
-            // Instead of searching through the (potentially incomplete) 'snapshots' list prop
             try {
                 const res = await fetch(`/api/snapshots/previous/${refDate}`);
                 if (res.ok) {
@@ -78,7 +78,8 @@ export const useSnapshotForm = (
                             quantityChange: Math.abs(a.addedQuantity).toString(),
                             costChange: Math.abs(a.addedPrincipal).toString(),
                             prevQuantity: prevAsset ? prevAsset.quantity : (a.quantity - a.addedQuantity),
-                            prevCost: prevAsset ? prevAsset.totalCost : (a.totalCost - a.addedPrincipal)
+                            prevCost: prevAsset ? prevAsset.totalCost : (a.totalCost - a.addedPrincipal),
+                            note: a.note || ''
                         };
                     });
                 }
@@ -100,7 +101,8 @@ export const useSnapshotForm = (
                             quantityChange: '',
                             costChange: '',
                             prevQuantity: prevAsset ? prevAsset.quantity : 0,
-                            prevCost: prevAsset ? prevAsset.totalCost : 0
+                            prevCost: prevAsset ? prevAsset.totalCost : 0,
+                            note: ''
                         });
                     });
                 }
@@ -121,7 +123,8 @@ export const useSnapshotForm = (
                                 quantityChange: '',
                                 costChange: '',
                                 prevQuantity: a.quantity,
-                                prevCost: a.totalCost
+                                prevCost: a.totalCost,
+                                note: ''
                             });
                         }
                     });
@@ -140,7 +143,7 @@ export const useSnapshotForm = (
         }
     };
 
-    const updateRow = (index: number, field: 'price' | 'quantityChange' | 'costChange' | 'transactionType', value: string) => {
+    const updateRow = (index: number, field: 'price' | 'quantityChange' | 'costChange' | 'transactionType' | 'note', value: string) => {
         const newRows = [...rows];
         const row = newRows[index];
         
@@ -173,7 +176,8 @@ export const useSnapshotForm = (
                 quantityChange: '',
                 costChange: '',
                 prevQuantity: 0, 
-                prevCost: 0
+                prevCost: 0,
+                note: ''
             }
         ]);
     };
@@ -210,7 +214,8 @@ export const useSnapshotForm = (
                 marketValue: newQuantity * price,
                 totalCost: newCost,
                 addedPrincipal: cChange,
-                addedQuantity: qChange
+                addedQuantity: qChange,
+                note: r.note
             };
         });
 

@@ -131,11 +131,13 @@ const run = async () => {
             // 2. 模拟交易流水 (Quantity Change & Cost Change)
             let addedQ = 0;
             let addedC = 0;
+            let txNote = ""; // 生成随机备注
 
             if (isInit) {
                 // 首月：全部视为买入
                 addedQ = state.quantity;
                 addedC = state.quantity * state.price;
+                txNote = "初始建仓";
             } else {
                 // 后续月份：随机定投或不动
                 const rand = Math.random();
@@ -147,6 +149,7 @@ const run = async () => {
                         addedQ = deposit; 
                         addedC = deposit;
                         state.quantity += deposit;
+                        txNote = Math.random() > 0.5 ? "定期存款" : "发工资存入";
                     } else {
                         // 买入资产 (假设花了 2000 块)
                         const cost = 2000;
@@ -154,6 +157,7 @@ const run = async () => {
                         addedQ = q;
                         addedC = cost;
                         state.quantity += q;
+                        txNote = Math.random() > 0.5 ? "看好后市加仓" : "定投扣款";
                     }
                 } else if (isFixed && rand < 0.2) {
                     // 固收类模拟产生利息 (Quantity增加，Cost不变)
@@ -161,6 +165,7 @@ const run = async () => {
                     addedQ = interest;
                     addedC = 0; // 这里的 Cost Change 为 0，代表纯利润
                     state.quantity += interest;
+                    // 利息通常没有手动流水备注，但我们可以加一个标记
                 }
             }
 
@@ -168,7 +173,8 @@ const run = async () => {
                 assetId: id,
                 unitPrice: state.price,
                 addedQuantity: addedQ,   // 本月新增份额
-                addedPrincipal: addedC   // 本月新增本金
+                addedPrincipal: addedC,  // 本月新增本金
+                note: txNote             // 交易备注
             });
         }
 

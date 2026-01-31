@@ -121,10 +121,11 @@ export const SnapshotService = {
         `;
         const holdings = await getQuery(holdingsSql, [snapshotDate]);
 
-        const flowSql = `SELECT asset_id, quantity_change, cost_change FROM transactions WHERE snapshot_id = ?`;
+        // Fetch Note as well
+        const flowSql = `SELECT asset_id, quantity_change, cost_change, note FROM transactions WHERE snapshot_id = ?`;
         const flows = await getQuery(flowSql, [id]);
         const flowMap = new Map();
-        flows.forEach(f => flowMap.set(f.asset_id, { q: f.quantity_change, c: f.cost_change }));
+        flows.forEach(f => flowMap.set(f.asset_id, { q: f.quantity_change, c: f.cost_change, n: f.note }));
 
         const fullAssets = await Promise.all(holdings.map(async (h) => {
             const assetInfo = await getQuery("SELECT name, type FROM assets WHERE id = ?", [h.assetId]);
@@ -141,7 +142,7 @@ export const SnapshotService = {
                 unitPrice = 1;
             }
 
-            const currentFlow = flowMap.get(h.assetId) || { q: 0, c: 0 };
+            const currentFlow = flowMap.get(h.assetId) || { q: 0, c: 0, n: '' };
 
             return {
                 id: uuidv4(),
@@ -153,7 +154,8 @@ export const SnapshotService = {
                 marketValue: h.quantity * unitPrice,
                 totalCost: h.totalCost,
                 addedQuantity: currentFlow.q,
-                addedPrincipal: currentFlow.c
+                addedPrincipal: currentFlow.c,
+                note: currentFlow.n || ''
             };
         }));
 
@@ -187,12 +189,16 @@ export const SnapshotService = {
 
                 const qChange = parseFloat(asset.addedQuantity) || 0;
                 const cChange = parseFloat(asset.addedPrincipal) || 0;
+                const txNote = asset.note || '';
                 
-                if (Math.abs(qChange) > 0 || Math.abs(cChange) > 0) {
+                // Save if there is a change OR if there is a note (sometimes we just want to note why we held)
+                // But strictly speaking, snapshots track position via accumulating transactions. 
+                // A zero-value transaction with a note is valid for logging purposes.
+                if (Math.abs(qChange) > 0 || Math.abs(cChange) > 0 || txNote.length > 0) {
                      await runQuery(`
-                        INSERT INTO transactions (id, asset_id, snapshot_id, date, type, quantity_change, cost_change, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                     `, [uuidv4(), asset.assetId, snapshotId, date, 'adjustment', qChange, cChange, now]);
+                        INSERT INTO transactions (id, asset_id, snapshot_id, date, type, quantity_change, cost_change, note, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     `, [uuidv4(), asset.assetId, snapshotId, date, 'adjustment', qChange, cChange, txNote, now]);
                 }
             }
 

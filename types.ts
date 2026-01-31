@@ -64,6 +64,9 @@ export interface AssetRecord {
   // Flow
   addedPrincipal: number;
   addedQuantity: number;
+  
+  // Transaction Note
+  note?: string; 
 }
 
 export interface SnapshotItem {

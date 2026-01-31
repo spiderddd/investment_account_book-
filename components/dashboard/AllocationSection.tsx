@@ -105,8 +105,8 @@ export const AllocationSection: React.FC<AllocationSectionProps> = ({
                         </div>
                         <div className="space-y-1">
                             {allocationData.map((item: any) => {
-                                // Safety check for stale data during transition
-                                const deviation = item.deviation || 0;
+                                // FIX: Safety check for undefined deviation during view transitions
+                                const deviation = typeof item.deviation === 'number' ? item.deviation : 0;
                                 const targetPercent = item.targetPercent ?? '-';
                                 
                                 return (
