@@ -68,6 +68,8 @@ export const SnapshotService = {
                 
                 return {
                     assetId: a.assetId,
+                    quantity: a.quantity,
+                    unitPrice: price,
                     marketValue: a.quantity * price,
                     totalCost: a.totalCost
                 };

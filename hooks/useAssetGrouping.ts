@@ -1,7 +1,8 @@
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Asset, SnapshotItem, StrategyVersion, AssetCategory } from '../types';
 import { Layers, HelpCircle, TrendingUp, Briefcase, Landmark, Coins, Wallet } from 'lucide-react';
+import { StorageService } from '../services/storageService';
 
 const CATEGORIES: { value: AssetCategory; label: string; icon: any; color: string }[] = [
   { value: 'security', label: '股票/证券', icon: TrendingUp, color: 'text-blue-600 bg-blue-50' },
@@ -24,29 +25,36 @@ interface AssetPerformance {
   isHistorical: boolean;
 }
 
-export const useAssetGrouping = (assets: Asset[], snapshots: SnapshotItem[], strategies: StrategyVersion[]) => {
+export const useAssetGrouping = (assets: Asset[], _propsSnapshots: SnapshotItem[], strategies: StrategyVersion[]) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showHeldOnly, setShowHeldOnly] = useState(false);
   const [groupBy, setGroupBy] = useState<'category' | 'layer'>('category');
   const [selectedDate, setSelectedDate] = useState<string>('latest');
+  
+  // We fetch full history snapshots (with assets) because the passed 'snapshots' are likely paginated/lightweight
+  const [fullSnapshots, setFullSnapshots] = useState<SnapshotItem[]>([]);
+
+  useEffect(() => {
+    StorageService.getSnapshotsHistory().then(data => setFullSnapshots(data));
+  }, []); // Run once on mount
 
   const availableDates = useMemo(() => {
-    return snapshots
+    return fullSnapshots
       .map(s => s.date)
       .sort((a, b) => b.localeCompare(a));
-  }, [snapshots]);
+  }, [fullSnapshots]);
 
   const activeStrategy = useMemo(() => {
       return strategies.find(s => s.status === 'active') || strategies[strategies.length - 1];
   }, [strategies]);
 
   const viewSnapshot = useMemo(() => {
-    if (!snapshots || snapshots.length === 0) return null;
+    if (!fullSnapshots || fullSnapshots.length === 0) return null;
     if (selectedDate === 'latest') {
-        return [...snapshots].sort((a, b) => b.date.localeCompare(a.date))[0];
+        return [...fullSnapshots].sort((a, b) => b.date.localeCompare(a.date))[0];
     }
-    return snapshots.find(s => s.date === selectedDate) || null;
-  }, [snapshots, selectedDate]);
+    return fullSnapshots.find(s => s.date === selectedDate) || null;
+  }, [fullSnapshots, selectedDate]);
 
   const assetPerformanceMap = useMemo(() => {
     const map = new Map<string, AssetPerformance>();
@@ -89,7 +97,7 @@ export const useAssetGrouping = (assets: Asset[], snapshots: SnapshotItem[], str
     if (selectedDate !== 'latest') {
         if (viewSnapshot) processSnapshot(viewSnapshot, false);
     } else {
-        const sorted = [...snapshots].sort((a, b) => a.date.localeCompare(b.date));
+        const sorted = [...fullSnapshots].sort((a, b) => a.date.localeCompare(b.date));
         sorted.forEach(s => {
             processSnapshot(s, true); 
         });
@@ -110,7 +118,7 @@ export const useAssetGrouping = (assets: Asset[], snapshots: SnapshotItem[], str
         }
     }
     return map;
-  }, [snapshots, selectedDate, viewSnapshot]);
+  }, [fullSnapshots, selectedDate, viewSnapshot]);
 
   const displaySections = useMemo(() => {
     let sections: any[] = [];
