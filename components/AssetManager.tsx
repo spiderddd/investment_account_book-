@@ -1,7 +1,9 @@
 
 import React, { useState, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { 
-  Search, Plus, Trash2, Edit2, History, BarChart2, Eye, EyeOff, Layers, LayoutGrid, AlertCircle, X, Save, TrendingUp, Loader2, Clock, ChevronDown
+  Search, Plus, Trash2, Edit2, History, BarChart2, Eye, EyeOff, Layers, LayoutGrid, AlertCircle, X, Save, TrendingUp, Loader2, Clock, ChevronDown, FileText
 } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, LineChart, Line, Legend 
@@ -58,6 +60,9 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
   const [viewHistoryId, setViewHistoryId] = useState<string | null>(null);
   const [historyData, setHistoryData] = useState<AssetHistoryRecord[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  
+  // Note View Modal State (Markdown Reader)
+  const [viewNoteContent, setViewNoteContent] = useState<string | null>(null);
 
   // --- Async Data Fetching for History ---
   useEffect(() => {
@@ -569,7 +574,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                                                 <th className="px-4 py-3 text-right">总成本</th>
                                                 <th className="px-4 py-3 text-right">市值</th>
                                                 <th className="px-4 py-3 text-right">盈亏</th>
-                                                <th className="px-4 py-3 text-left w-32">备注</th>
+                                                <th className="px-4 py-3 text-center w-20">备注</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
@@ -597,8 +602,18 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                                                     <td className={`px-4 py-3 text-right font-medium ${row.profit >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                                                         {row.profit >= 0 ? '+' : ''}{row.profit.toLocaleString()}
                                                     </td>
-                                                    <td className="px-4 py-3 text-left text-xs text-slate-500 max-w-[200px] truncate" title={row.note}>
-                                                        {row.note || '-'}
+                                                    <td className="px-4 py-3 text-center">
+                                                        {row.note ? (
+                                                            <button 
+                                                                onClick={() => setViewNoteContent(row.note || null)}
+                                                                className="p-1.5 text-blue-500 hover:bg-blue-50 rounded transition-colors"
+                                                                title="查看备注"
+                                                            >
+                                                                <FileText size={16} />
+                                                            </button>
+                                                        ) : (
+                                                            <span className="text-slate-300">-</span>
+                                                        )}
                                                     </td>
                                                 </tr>
                                             ))}
@@ -618,6 +633,26 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                 </div>
             </div>
         </div>
+      )}
+
+      {/* Note View Modal (Floating on top of everything) */}
+      {viewNoteContent && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+              <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl p-6 animate-in fade-in zoom-in-95 duration-200 border border-slate-100">
+                  <div className="flex justify-between items-center mb-4 border-b border-slate-100 pb-2">
+                      <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                          <FileText className="text-blue-500" size={20} />
+                          备注详情
+                      </h3>
+                      <button onClick={() => setViewNoteContent(null)} className="p-1 text-slate-400 hover:bg-slate-100 rounded-full">
+                          <X size={20} />
+                      </button>
+                  </div>
+                  <div className="prose prose-sm max-w-none text-slate-600 max-h-[60vh] overflow-y-auto">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{viewNoteContent}</ReactMarkdown>
+                  </div>
+              </div>
+          </div>
       )}
     </div>
   );

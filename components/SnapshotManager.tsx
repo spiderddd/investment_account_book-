@@ -2,7 +2,7 @@
 import React, { useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Plus, Calendar, Trash2, TrendingUp, Briefcase, Landmark, Coins, Wallet, Bitcoin, Save, FileText, ChevronDown, ChevronUp, Loader2, ChevronLeft, ChevronRight, Activity, MessageSquare } from 'lucide-react';
+import { Plus, Calendar, Trash2, TrendingUp, Briefcase, Landmark, Coins, Wallet, Bitcoin, Save, FileText, ChevronDown, ChevronUp, Loader2, ChevronLeft, ChevronRight, Activity, MessageSquare, X } from 'lucide-react';
 import { SnapshotItem, StrategyVersion, AssetCategory, Asset } from '../types';
 import { getStrategyForDate } from '../utils/calculators';
 import { useData } from '../contexts/DataContext';
@@ -34,8 +34,8 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
   const [newAssetType, setNewAssetType] = useState<AssetCategory>('security');
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
   
-  // Track which rows have their note input expanded in Entry Mode
-  const [expandedRowNotes, setExpandedRowNotes] = useState<Set<string>>(new Set());
+  // Track which row is currently opening the Note Modal
+  const [editingNoteIndex, setEditingNoteIndex] = useState<number | null>(null);
 
   const sortedSnapshots = [...snapshots].sort((a, b) => b.date.localeCompare(a.date));
 
@@ -62,7 +62,7 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
   // Wrappers
   const handleInitEntry = async (id?: string) => {
       await initEntryForm(id);
-      setExpandedRowNotes(new Set()); // Reset expanded rows
+      setEditingNoteIndex(null);
       setViewMode('entry');
   };
 
@@ -92,13 +92,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     setExpandedNotes(newSet);
   };
 
-  const toggleRowNote = (recordId: string) => {
-      const newSet = new Set(expandedRowNotes);
-      if (newSet.has(recordId)) newSet.delete(recordId);
-      else newSet.add(recordId);
-      setExpandedRowNotes(newSet);
-  };
-
   const getCategoryIcon = (c: AssetCategory) => {
     switch (c) {
       case 'security': return <TrendingUp size={16} className="text-blue-600"/>;
@@ -124,7 +117,7 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
     const availableAssets = assets.filter(a => !rows.find(r => r.assetId === a.id));
 
     return (
-      <div className="pb-20">
+      <div className="pb-20 relative">
         <div className="bg-white rounded-xl shadow-sm border border-slate-100 flex flex-col h-full">
           {/* Header */}
           <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center sticky top-0 z-10">
@@ -246,7 +239,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                   const quantityStep = row.category === 'security' ? "100" : (row.category === 'fund' ? "0.01" : "1");
 
                   const hasNote = row.note && row.note.trim().length > 0;
-                  const isExpanded = expandedRowNotes.has(row.recordId);
 
                   return (
                     <React.Fragment key={row.recordId}>
@@ -261,9 +253,9 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                                 <div className="text-[10px] text-slate-400 uppercase">{row.category}</div>
                             </div>
                             <button 
-                                onClick={() => toggleRowNote(row.recordId)}
+                                onClick={() => setEditingNoteIndex(idx)}
                                 className={`p-1.5 rounded transition-colors ${hasNote ? 'text-blue-500 bg-blue-50' : 'text-slate-300 hover:text-slate-500 hover:bg-slate-100'}`}
-                                title="添加交易备注"
+                                title="点击编辑备注 (Markdown)"
                             >
                                 <MessageSquare size={16} fill={hasNote ? "currentColor" : "none"} />
                             </button>
@@ -327,24 +319,6 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                             <button onClick={() => removeRow(idx)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
                         </td>
                         </tr>
-                        {isExpanded && (
-                             <tr className="bg-slate-50/50">
-                                <td colSpan={7} className="px-4 pb-4 pt-1 border-b border-slate-100">
-                                    <div className="flex items-start gap-2">
-                                        <MessageSquare size={16} className="text-slate-400 mt-2 shrink-0" />
-                                        <div className="flex-1">
-                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">该笔资产变动备注</label>
-                                            <input 
-                                                className="w-full text-sm bg-white border border-slate-200 rounded px-3 py-2 text-slate-700 focus:ring-2 focus:ring-blue-500 outline-none"
-                                                placeholder="例如：看好后市加仓；急需资金卖出..."
-                                                value={row.note}
-                                                onChange={e => updateRow(idx, 'note', e.target.value)}
-                                            />
-                                        </div>
-                                    </div>
-                                </td>
-                             </tr>
-                        )}
                     </React.Fragment>
                   );
                 })}
@@ -352,6 +326,55 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
             </table>
           </div>
         </div>
+
+        {/* Note Editor Modal */}
+        {editingNoteIndex !== null && (
+             <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                 <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200 h-[600px]">
+                     <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                         <div>
+                             <h3 className="font-bold text-slate-800">编辑交易备注</h3>
+                             <p className="text-xs text-slate-500">{rows[editingNoteIndex].name}</p>
+                         </div>
+                         <button onClick={() => setEditingNoteIndex(null)} className="p-2 hover:bg-slate-200 rounded-full text-slate-500">
+                             <X size={20} />
+                         </button>
+                     </div>
+                     <div className="flex-1 flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-slate-100 overflow-hidden">
+                         {/* Editor */}
+                         <div className="flex-1 flex flex-col p-4 bg-white">
+                             <div className="text-xs font-bold text-slate-400 mb-2 uppercase flex justify-between items-center">
+                                 <span>Markdown 编辑</span>
+                                 <a href="https://markdown.com.cn/basic-syntax/" target="_blank" className="text-blue-500 hover:underline">语法参考</a>
+                             </div>
+                             <textarea 
+                                 className="flex-1 w-full p-4 border border-slate-200 rounded-lg resize-none font-mono text-sm leading-relaxed focus:ring-2 focus:ring-blue-500 outline-none shadow-inner bg-slate-50 text-slate-700"
+                                 placeholder="# 记录交易理由...\n- 看好后市\n- 止盈离场"
+                                 value={rows[editingNoteIndex].note}
+                                 onChange={e => updateRow(editingNoteIndex, 'note', e.target.value)}
+                                 autoFocus
+                             />
+                         </div>
+                         {/* Preview */}
+                         <div className="flex-1 flex flex-col p-4 bg-slate-50/50">
+                             <div className="text-xs font-bold text-slate-400 mb-2 uppercase">预览效果</div>
+                             <div className="flex-1 overflow-y-auto prose prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-li:my-0 bg-white border border-slate-100 rounded-lg p-4">
+                                {rows[editingNoteIndex].note ? (
+                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{rows[editingNoteIndex].note}</ReactMarkdown>
+                                ) : (
+                                    <span className="text-slate-300 italic">暂无内容...</span>
+                                )}
+                             </div>
+                         </div>
+                     </div>
+                     <div className="p-4 border-t border-slate-100 bg-white flex justify-end">
+                         <button onClick={() => setEditingNoteIndex(null)} className="px-6 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 font-medium shadow-lg shadow-slate-200">
+                             完成
+                         </button>
+                     </div>
+                 </div>
+             </div>
+        )}
 
         {/* Create Asset Modal */}
         {isCreatingAsset && (
