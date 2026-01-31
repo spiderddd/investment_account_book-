@@ -1,3 +1,4 @@
+
 import { StrategyVersion, SnapshotItem, StrategyTarget, AssetCategory } from '../types';
 
 export const LAYER_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#64748b'];
@@ -38,7 +39,9 @@ export const getSnapshotMetrics = (
     if (viewMode === 'total') {
       return { value: s.totalValue, invested: s.totalInvested };
     } else {
-      // DYNAMIC CALCULATION: Only sum assets that exist in the active strategy for THIS snapshot
+      // Safety Check: If assets are not loaded (lightweight snapshot), return 0 to indicate pending state
+      if (!s.assets) return { value: 0, invested: 0 };
+
       const strat = getStrategyForDate(versions, s.date);
       const map = getAssetTargetMap(strat);
       
@@ -56,7 +59,8 @@ export const calculateAllocationData = (
     viewMode: 'strategy' | 'total',
     selectedLayerId: string | null
 ) => {
-    if (!endSnapshot) return [];
+    // Safety Check: We need full asset details to calculate allocation
+    if (!endSnapshot || !endSnapshot.assets) return [];
     
     // 1. Total View (Asset Categories)
     if (viewMode === 'total') {
@@ -76,7 +80,7 @@ export const calculateAllocationData = (
         return Object.keys(grouped).map(key => ({
             name: key,
             value: grouped[key],
-            percent: parseFloat(((grouped[key] / totalValue) * 100).toFixed(1)),
+            percent: totalValue > 0 ? parseFloat(((grouped[key] / totalValue) * 100).toFixed(1)) : 0,
             color: CATEGORY_COLORS[key] || '#cbd5e1'
         })).sort((a, b) => b.value - a.value);
     }
@@ -93,7 +97,7 @@ export const calculateAllocationData = (
     // 2a. Level 1: Layer View (Root)
     if (selectedLayerId === null) {
         return activeStrategy.layers.map((layer, idx) => {
-            const layerActualValue = endSnapshot.assets.reduce((sum, asset) => {
+            const layerActualValue = endSnapshot.assets!.reduce((sum, asset) => {
                 const mapping = assetTargetMap.get(asset.assetId);
                 if (mapping && mapping.layerId === layer.id) {
                     return sum + asset.marketValue;
@@ -122,7 +126,7 @@ export const calculateAllocationData = (
         if (!layer) return [];
 
         const getTargetActualValue = (target: StrategyTarget) => {
-            const assets = endSnapshot.assets.filter(a => a.assetId === target.assetId);
+            const assets = endSnapshot.assets!.filter(a => a.assetId === target.assetId);
             return assets.reduce((sum, a) => sum + a.marketValue, 0);
         };
 
@@ -180,14 +184,17 @@ export const calculateHistoryData = (
           const stratAtTime = getStrategyForDate(versions, s.date);
           const mapAtTime = getAssetTargetMap(stratAtTime);
 
-          if (targetAssetIds) {
-              const assets = s.assets.filter(a => targetAssetIds!.has(a.assetId) && mapAtTime.has(a.assetId));
-              val = assets.reduce((sum, a) => sum + a.marketValue, 0);
-              inv = assets.reduce((sum, a) => sum + a.totalCost, 0);
-          } else {
-              const assets = s.assets.filter(a => mapAtTime.has(a.assetId));
-              val = assets.reduce((sum, a) => sum + a.marketValue, 0);
-              inv = assets.reduce((sum, a) => sum + a.totalCost, 0);
+          // Only proceed if assets exist (History endpoint provides simplified assets)
+          if (s.assets) {
+              if (targetAssetIds) {
+                  const assets = s.assets.filter(a => targetAssetIds!.has(a.assetId) && mapAtTime.has(a.assetId));
+                  val = assets.reduce((sum, a) => sum + a.marketValue, 0);
+                  inv = assets.reduce((sum, a) => sum + a.totalCost, 0);
+              } else {
+                  const assets = s.assets.filter(a => mapAtTime.has(a.assetId));
+                  val = assets.reduce((sum, a) => sum + a.marketValue, 0);
+                  inv = assets.reduce((sum, a) => sum + a.totalCost, 0);
+              }
           }
       } else {
           val = s.totalValue;
@@ -209,12 +216,12 @@ export const calculateBreakdownData = (
     viewMode: 'strategy' | 'total',
     selectedLayerId: string | null
 ) => {
-    if (!endSnapshot) return [];
+    // Safety check: both snapshots must have assets loaded
+    if (!endSnapshot || !endSnapshot.assets || !startSnapshot || !startSnapshot.assets) return [];
     
     // Helper to get stats for a set of Asset IDs
-    const getStats = (s: SnapshotItem | null, assetIds: Set<string>) => {
-        if (!s) return { v: 0, c: 0 };
-        const relevant = s.assets.filter(a => assetIds.has(a.assetId));
+    const getStats = (s: SnapshotItem, assetIds: Set<string>) => {
+        const relevant = s.assets!.filter(a => assetIds.has(a.assetId));
         return {
             v: relevant.reduce((sum, a) => sum + a.marketValue, 0),
             c: relevant.reduce((sum, a) => sum + a.totalCost, 0)
@@ -231,12 +238,11 @@ export const calculateBreakdownData = (
             'other': '其他'
         };
 
-        const calcCatStats = (s: SnapshotItem | null) => {
+        const calcCatStats = (s: SnapshotItem) => {
             const res: Record<string, { v: number, c: number }> = {};
             categories.forEach(c => res[c] = { v: 0, c: 0 });
-            if (!s) return res;
             
-            s.assets.forEach(a => {
+            s.assets!.forEach(a => {
                 const cat = catMap[a.category] || '其他';
                 if (res[cat]) {
                     res[cat].v += a.marketValue;

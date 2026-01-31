@@ -5,7 +5,7 @@ import { db, runQuery, getQuery } from '../db.js';
 
 const router = express.Router();
 
-// 1. GET / - Lightweight Summary List (No Assets)
+// 1. GET / - Lightweight Summary List (No Assets) - For List View
 router.get('/', async (req, res) => {
     const sql = `
         SELECT id, date, total_value as totalValue, total_invested as totalInvested, note
@@ -18,7 +18,38 @@ router.get('/', async (req, res) => {
     } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-// 2. GET /:id - Full Details for a Single Snapshot
+// 2. GET /history - Lightweight Assets for Charts (Minimal fields)
+// This restores the ability to calculate strategy curves without loading full details.
+router.get('/history', async (req, res) => {
+    const sql = `
+        SELECT 
+            s.id, s.date, 
+            s.total_value as totalValue, 
+            s.total_invested as totalInvested,
+            (
+                SELECT json_group_array(json_object(
+                    'assetId', p.asset_id,
+                    'marketValue', p.quantity * p.price,
+                    'totalCost', p.total_cost
+                ))
+                FROM positions p
+                WHERE p.snapshot_id = s.id
+            ) as assetsJson
+        FROM snapshots s
+        ORDER BY s.date ASC
+    `;
+    try {
+        const rows = await getQuery(sql);
+        // Parse JSON string from SQLite
+        const result = rows.map(row => ({
+            ...row,
+            assets: row.assetsJson ? JSON.parse(row.assetsJson) : []
+        }));
+        res.json(result);
+    } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+// 3. GET /:id - Full Details for a Single Snapshot - For Drilldown/Pie Chart/Editing
 router.get('/:id', async (req, res) => {
     try {
         // Get Header
@@ -49,7 +80,7 @@ router.get('/:id', async (req, res) => {
     } catch (e) { res.status(500).json({error: e.message}); }
 });
 
-// 3. POST / - Save Snapshot (Transactional)
+// 4. POST / - Save Snapshot (Transactional)
 router.post('/', async (req, res) => {
     const { date, assets, note } = req.body; 
     
@@ -71,8 +102,7 @@ router.post('/', async (req, res) => {
             if (row.length > 0) {
                 db.run("UPDATE snapshots SET total_value=?, total_invested=?, note=?, updated_at=? WHERE id=?", 
                     [totalValue, totalInvested, note, now, snapshotId]);
-                // Optimization: In a real prod app, we should diff/update, but for this scale, 
-                // replace-all within a transaction is acceptable if atomic.
+                // Delete old positions to replace with new ones
                 db.run("DELETE FROM positions WHERE snapshot_id=?", [snapshotId]);
             } else {
                 db.run("INSERT INTO snapshots (id, date, total_value, total_invested, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",

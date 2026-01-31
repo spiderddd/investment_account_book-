@@ -85,7 +85,7 @@ export const StorageService = {
 
   // --- Snapshots ---
   
-  // Gets Lightweight List
+  // Gets Lightweight List (For List View)
   getSnapshots: async (): Promise<SnapshotItem[]> => {
     try {
       const res = await fetch(`${API_BASE}/snapshots`);
@@ -94,7 +94,16 @@ export const StorageService = {
     } catch (e) { console.error(e); return []; }
   },
 
-  // Gets Full Details
+  // Gets Lightweight Assets History (For Charting)
+  getSnapshotsHistory: async (): Promise<SnapshotItem[]> => {
+    try {
+      const res = await fetch(`${API_BASE}/snapshots/history`);
+      if (!res.ok) throw new Error('Failed to fetch snapshots history');
+      return await res.json();
+    } catch (e) { console.error(e); return []; }
+  },
+
+  // Gets Full Details (For Single View)
   getSnapshot: async (id: string): Promise<SnapshotItem | null> => {
     try {
         const res = await fetch(`${API_BASE}/snapshots/${id}`);

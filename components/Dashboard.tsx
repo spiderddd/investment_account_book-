@@ -4,7 +4,7 @@ import {
   PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer, 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Legend 
 } from 'recharts';
-import { TrendingUp, DollarSign, Activity, Wallet, History, Calendar, Filter, ArrowRight, ChevronRight, ArrowLeft, Layers } from 'lucide-react';
+import { TrendingUp, DollarSign, Activity, Wallet, History, Calendar, Filter, ArrowRight, ChevronRight, ArrowLeft, Layers, Loader2 } from 'lucide-react';
 import { StrategyVersion, SnapshotItem } from '../types';
 import { useDashboardData } from '../hooks/useDashboardData';
 
@@ -20,6 +20,7 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
     selectedLayerId, setSelectedLayerId,
     rangeConfig,
     startSnapshot, endSnapshot,
+    loadingDetails,
     endMetrics, startMetrics,
     activeStrategyEnd,
     allocationData,
@@ -66,14 +67,14 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
       </div>
       
       {/* Analysis Banner */}
-      {timeRange !== 'all' && endSnapshot && (
+      {timeRange !== 'all' && (
         <div className="text-xs text-slate-500 flex flex-wrap items-center gap-2 bg-blue-50/50 p-2 rounded-lg border border-blue-100">
            <Filter size={12} className="text-blue-500" />
            <span className="font-semibold text-blue-700">{rangeConfig.label}区间分析:</span>
            <div className="flex items-center gap-1">
              <span className="bg-white px-1.5 py-0.5 rounded border border-blue-100">{startSnapshot ? startSnapshot.date : '期初'}</span>
              <ArrowRight size={12} className="text-blue-300" />
-             <span className="bg-white px-1.5 py-0.5 rounded border border-blue-100">{endSnapshot.date}</span>
+             <span className="bg-white px-1.5 py-0.5 rounded border border-blue-100">{endSnapshot?.date || '...'}</span>
            </div>
            <span className="text-slate-400 ml-auto hidden sm:inline">基于区间变动计算盈亏</span>
         </div>
@@ -86,14 +87,18 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
             <span className="text-slate-500 text-sm font-medium">{viewMode === 'strategy' ? '期末策略市值' : '期末总资产'}</span>
             <DollarSign className="text-rose-500" size={20} />
           </div>
-          <div className="text-2xl font-bold text-slate-900">¥{displayValue.toLocaleString()}</div>
+          <div className="text-2xl font-bold text-slate-900">
+              {loadingDetails ? <span className="text-slate-300 animate-pulse">...</span> : `¥${displayValue.toLocaleString()}`}
+          </div>
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-2">
             <span className="text-slate-500 text-sm font-medium">期末总本金</span>
             <Activity className="text-blue-500" size={20} />
           </div>
-          <div className="text-2xl font-bold text-slate-900">¥{displayInvested.toLocaleString()}</div>
+          <div className="text-2xl font-bold text-slate-900">
+              {loadingDetails ? <span className="text-slate-300 animate-pulse">...</span> : `¥${displayInvested.toLocaleString()}`}
+          </div>
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-100 relative overflow-hidden">
           {timeRange !== 'all' && <div className="absolute top-0 right-0 bg-indigo-50 text-indigo-600 text-[10px] font-bold px-2 py-1 rounded-bl-lg">区间收益</div>}
@@ -101,11 +106,17 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
             <span className="text-slate-500 text-sm font-medium">{timeRange === 'all' ? '历史累计盈亏' : `${rangeConfig.label}盈亏`}</span>
             <TrendingUp className={periodProfit >= 0 ? "text-rose-500" : "text-emerald-500"} size={20} />
           </div>
-          <div className={`text-2xl font-bold ${periodProfit >= 0 ? "text-rose-600" : "text-emerald-600"}`}>{periodProfit >= 0 ? '+' : ''}{periodProfit.toLocaleString()}</div>
-          <div className="text-xs text-slate-400 mt-1 flex items-center justify-between">
-             <span>{timeRange === 'all' ? '累计回报率' : '区间回报率'}:</span>
-             <span className={`font-mono ${periodProfit >= 0 ? "text-rose-600" : "text-emerald-600"}`}>{periodProfit >= 0 ? '+' : ''}{returnRate.toFixed(2)}%</span>
-          </div>
+          {loadingDetails ? (
+              <div className="text-2xl font-bold text-slate-300 animate-pulse">...</div>
+          ) : (
+             <>
+                <div className={`text-2xl font-bold ${periodProfit >= 0 ? "text-rose-600" : "text-emerald-600"}`}>{periodProfit >= 0 ? '+' : ''}{periodProfit.toLocaleString()}</div>
+                <div className="text-xs text-slate-400 mt-1 flex items-center justify-between">
+                    <span>{timeRange === 'all' ? '累计回报率' : '区间回报率'}:</span>
+                    <span className={`font-mono ${periodProfit >= 0 ? "text-rose-600" : "text-emerald-600"}`}>{periodProfit >= 0 ? '+' : ''}{returnRate.toFixed(2)}%</span>
+                </div>
+             </>
+          )}
         </div>
       </div>
 
@@ -139,7 +150,12 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
              )}
           </div>
           
-          {allocationData.length > 0 ? (
+          {loadingDetails ? (
+            <div className="h-64 flex flex-col items-center justify-center text-slate-400 bg-slate-50 rounded-lg animate-pulse">
+                <Loader2 className="animate-spin mb-2" />
+                <span className="text-xs">加载明细中...</span>
+            </div>
+          ) : allocationData.length > 0 ? (
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -173,45 +189,55 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
             <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
                 {viewMode === 'total' ? '按资产类别' : (selectedLayerId ? '层级内资产明细' : '按防御层级 (点击查看详情)')}
             </h4>
-            <div className="flex items-center justify-between text-xs font-semibold text-slate-400 mb-2 px-2">
-               <span className="flex-1">名称</span>
-               <span className="flex-1 text-right">持有市值</span>
-               <span className="w-32 text-right">占比 / 目标 (偏离)</span>
-            </div>
-            <div className="space-y-1">
-              {allocationData.map((item: any) => (
-                <div 
-                    key={item.id || item.name} 
-                    onClick={() => {
-                        // Click row to drill down
-                        if (viewMode === 'strategy' && !selectedLayerId && item.isLayer) {
-                            setSelectedLayerId(item.id);
-                        }
-                    }}
-                    className={`flex items-center justify-between text-sm p-2 rounded transition-all border border-transparent ${viewMode === 'strategy' && !selectedLayerId ? 'hover:bg-blue-50 hover:border-blue-100 cursor-pointer group' : 'hover:bg-slate-50'}`}
-                >
-                  <div className="flex-1 flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: item.color }}></div>
-                    <span className="text-slate-700 font-medium truncate" title={item.name}>{item.name}</span>
-                    {viewMode === 'strategy' && !selectedLayerId && <ChevronRight size={14} className="text-slate-300 group-hover:text-blue-400" />}
-                  </div>
-                  <div className="flex-1 text-right font-mono text-slate-600 px-2">¥{item.value.toLocaleString()}</div>
-                  <div className="w-32 text-right">
-                     {viewMode === 'strategy' ? (
-                       <div className="flex flex-col items-end leading-tight">
-                         <div className="flex items-baseline gap-1">
-                            <span className="font-bold text-slate-800">{item.percent}%</span>
-                            <span className="text-xs text-slate-400">/ {item.targetPercent}%</span>
-                         </div>
-                         <span className={`text-[10px] font-medium ${Math.abs(item.deviation) > 2 ? (item.deviation > 0 ? 'text-amber-600' : 'text-blue-600') : 'text-slate-300'}`}>{item.deviation > 0 ? '+' : ''}{item.deviation.toFixed(1)}%</span>
-                       </div>
-                     ) : (
-                       <span className="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-xs">{item.percent}%</span>
-                     )}
-                  </div>
+            {loadingDetails ? (
+                <div className="space-y-2">
+                    <div className="h-8 bg-slate-100 rounded animate-pulse"></div>
+                    <div className="h-8 bg-slate-100 rounded animate-pulse"></div>
+                    <div className="h-8 bg-slate-100 rounded animate-pulse"></div>
                 </div>
-              ))}
-            </div>
+            ) : (
+                <>
+                <div className="flex items-center justify-between text-xs font-semibold text-slate-400 mb-2 px-2">
+                <span className="flex-1">名称</span>
+                <span className="flex-1 text-right">持有市值</span>
+                <span className="w-32 text-right">占比 / 目标 (偏离)</span>
+                </div>
+                <div className="space-y-1">
+                {allocationData.map((item: any) => (
+                    <div 
+                        key={item.id || item.name} 
+                        onClick={() => {
+                            // Click row to drill down
+                            if (viewMode === 'strategy' && !selectedLayerId && item.isLayer) {
+                                setSelectedLayerId(item.id);
+                            }
+                        }}
+                        className={`flex items-center justify-between text-sm p-2 rounded transition-all border border-transparent ${viewMode === 'strategy' && !selectedLayerId ? 'hover:bg-blue-50 hover:border-blue-100 cursor-pointer group' : 'hover:bg-slate-50'}`}
+                    >
+                    <div className="flex-1 flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: item.color }}></div>
+                        <span className="text-slate-700 font-medium truncate" title={item.name}>{item.name}</span>
+                        {viewMode === 'strategy' && !selectedLayerId && <ChevronRight size={14} className="text-slate-300 group-hover:text-blue-400" />}
+                    </div>
+                    <div className="flex-1 text-right font-mono text-slate-600 px-2">¥{item.value.toLocaleString()}</div>
+                    <div className="w-32 text-right">
+                        {viewMode === 'strategy' ? (
+                        <div className="flex flex-col items-end leading-tight">
+                            <div className="flex items-baseline gap-1">
+                                <span className="font-bold text-slate-800">{item.percent}%</span>
+                                <span className="text-xs text-slate-400">/ {item.targetPercent}%</span>
+                            </div>
+                            <span className={`text-[10px] font-medium ${Math.abs(item.deviation) > 2 ? (item.deviation > 0 ? 'text-amber-600' : 'text-blue-600') : 'text-slate-300'}`}>{item.deviation > 0 ? '+' : ''}{item.deviation.toFixed(1)}%</span>
+                        </div>
+                        ) : (
+                        <span className="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-xs">{item.percent}%</span>
+                        )}
+                    </div>
+                    </div>
+                ))}
+                </div>
+                </>
+            )}
           </div>
         </div>
 
@@ -259,7 +285,14 @@ const Dashboard: React.FC<DashboardProps> = ({ strategies: versions, snapshots }
           )}
 
           {/* Detailed Breakdown Table */}
-          {breakdownData.length > 0 && (
+          {loadingDetails ? (
+              <div className="mt-8 pt-4 border-t border-slate-100">
+                  <div className="flex items-center gap-2 mb-4">
+                      <Loader2 className="animate-spin text-slate-400" size={16} />
+                      <span className="text-sm text-slate-500">正在计算区间变动明细...</span>
+                  </div>
+              </div>
+          ) : breakdownData.length > 0 && (
               <div className="mt-8 pt-4 border-t border-slate-100">
                   <div className="flex items-center justify-between mb-4">
                       <h4 className="text-sm font-bold text-slate-700 flex items-center gap-2">
