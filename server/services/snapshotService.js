@@ -4,12 +4,54 @@ import { db, runQuery, getQuery, withTransaction } from '../db.js';
 
 export const SnapshotService = {
     getList: async () => {
+        // Updated to join positions and assets to return full tree structure
+        // This ensures AssetManager has data to calculate current holdings
         const sql = `
-            SELECT id, date, total_value as totalValue, total_invested as totalInvested, note
-            FROM snapshots
-            ORDER BY date DESC
+            SELECT 
+                s.id, s.date, s.total_value as totalValue, s.total_invested as totalInvested, s.note,
+                p.id as posId, p.asset_id as assetId, 
+                p.quantity, p.price, p.total_cost as totalCost,
+                p.added_quantity as addedQuantity, p.added_principal as addedPrincipal,
+                (p.quantity * p.price) as marketValue,
+                a.name as assetName, a.type as assetCategory
+            FROM snapshots s
+            LEFT JOIN positions p ON p.snapshot_id = s.id
+            LEFT JOIN assets a ON p.asset_id = a.id
+            ORDER BY s.date DESC
         `;
-        return await getQuery(sql);
+        
+        const rows = await getQuery(sql);
+        
+        const map = new Map();
+        rows.forEach(r => {
+             if (!map.has(r.id)) {
+                 map.set(r.id, {
+                     id: r.id,
+                     date: r.date,
+                     totalValue: r.totalValue,
+                     totalInvested: r.totalInvested,
+                     note: r.note,
+                     assets: []
+                 });
+             }
+             
+             if (r.posId) {
+                 map.get(r.id).assets.push({
+                     id: r.posId,
+                     assetId: r.assetId,
+                     name: r.assetName,
+                     category: r.assetCategory,
+                     unitPrice: r.price,
+                     quantity: r.quantity,
+                     marketValue: r.marketValue,
+                     totalCost: r.totalCost,
+                     addedQuantity: r.addedQuantity,
+                     addedPrincipal: r.addedPrincipal
+                 });
+             }
+        });
+        
+        return Array.from(map.values());
     },
 
     getHistoryGraph: async () => {

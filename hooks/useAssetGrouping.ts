@@ -52,6 +52,9 @@ export const useAssetGrouping = (assets: Asset[], snapshots: SnapshotItem[], str
     const map = new Map<string, AssetPerformance>();
     
     const processSnapshot = (s: SnapshotItem, isHist: boolean) => {
+        // Safe check for undefined assets
+        if (!s.assets) return;
+
         s.assets.forEach(a => {
             if (a.quantity > 0) {
                 const existing = map.get(a.assetId);
@@ -93,14 +96,17 @@ export const useAssetGrouping = (assets: Asset[], snapshots: SnapshotItem[], str
 
         if (sorted.length > 0) {
             const latest = sorted[sorted.length - 1];
-            latest.assets.forEach(a => {
-                if (a.quantity > 0 && map.has(a.assetId)) {
-                   const rec = map.get(a.assetId)!;
-                   if (rec.date === latest.date) {
-                       rec.isHistorical = false;
-                   }
-                }
-            });
+            // Ensure latest has assets before accessing
+            if (latest && latest.assets) {
+                latest.assets.forEach(a => {
+                    if (a.quantity > 0 && map.has(a.assetId)) {
+                        const rec = map.get(a.assetId)!;
+                        if (rec.date === latest.date) {
+                            rec.isHistorical = false;
+                        }
+                    }
+                });
+            }
         }
     }
     return map;
