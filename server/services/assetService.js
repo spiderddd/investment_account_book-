@@ -50,49 +50,71 @@ export const AssetService = {
     },
 
     getHistory: async (assetId) => {
-        // Reconstruction logic for a single asset's history
-        // 1. Get all transactions
+        // OPTIMIZED: Fetch all raw data first
+        
+        // 1. Get all transactions for this asset
         const txs = await getQuery("SELECT date, quantity_change, cost_change FROM transactions WHERE asset_id = ? ORDER BY date ASC", [assetId]);
-        // 2. Get all prices
+        
+        // 2. Get all prices for this asset
         const prices = await getQuery("SELECT date, price FROM market_prices WHERE asset_id = ? ORDER BY date ASC", [assetId]);
         
-        // Merge them into a timeline is complex in SQL, usually done in application code or sophisticated recursive CTEs.
-        // For simplicity, we will mimic the previous output format by aggregating per Month (Snapshot Dates).
-        // OR better: Return all data points where an event occurred.
-        
-        // Let's stick to returning snapshot-aligned history for chart consistency
+        // 3. Get snapshot dates (to align the timeline)
         const snapshots = await getQuery("SELECT date FROM snapshots ORDER BY date ASC");
         
         const history = [];
+        
+        // Optimization pointers
+        let txIndex = 0;
+        
         let cumQ = 0;
         let cumC = 0;
         
         for (const s of snapshots) {
-            // Sum changes up to this date
-            // Optimization: We could do this in one SQL, but looping logic is clearer for "Running Total" reconstruction
-            const relevantTxs = txs.filter(t => t.date <= s.date && t.date > (history.length > 0 ? history[history.length-1].date : ''));
+            const snapDate = s.date;
             
-            // Accumulate
-            relevantTxs.forEach(t => {
+            let periodAddedQ = 0;
+            let periodAddedC = 0;
+            
+            // Advance transaction pointer until we pass the snapshot date
+            while (txIndex < txs.length && txs[txIndex].date <= snapDate) {
+                const t = txs[txIndex];
                 cumQ += t.quantity_change;
                 cumC += t.cost_change;
-            });
+                
+                // Track changes that specifically belong to this "period" (between previous snap and this one)
+                // Note: This logic assumes snapshots are chronologically processed.
+                periodAddedQ += t.quantity_change;
+                periodAddedC += t.cost_change;
+                
+                txIndex++;
+            }
+            
+            // If asset never existed or was fully sold long ago and no activity, we might skip
+            // But if it has a non-zero quantity, we must record it.
+            // If it has 0 quantity but had activity this month, record it.
+            if (Math.abs(cumQ) < 0.000001 && periodAddedQ === 0 && periodAddedC === 0) {
+                continue; 
+            }
 
             // Find price at this date
-            const pObj = prices.filter(p => p.date <= s.date).pop(); // Last known price
-            const unitPrice = pObj ? pObj.price : 0;
-            
-            if (cumQ !== 0 || cumC !== 0) {
-                 history.push({
-                    date: s.date,
-                    unitPrice: unitPrice,
-                    quantity: cumQ,
-                    marketValue: cumQ * unitPrice,
-                    totalCost: cumC,
-                    addedQuantity: relevantTxs.reduce((sum, t) => sum + t.quantity_change, 0), // Approximation for "Added in this period"
-                    addedPrincipal: relevantTxs.reduce((sum, t) => sum + t.cost_change, 0)
-                });
+            // Simple reverse search for latest price <= snapDate
+            let unitPrice = 0;
+            for (let i = prices.length - 1; i >= 0; i--) {
+                if (prices[i].date <= snapDate) {
+                    unitPrice = prices[i].price;
+                    break;
+                }
             }
+            
+            history.push({
+                date: snapDate,
+                unitPrice: unitPrice,
+                quantity: cumQ,
+                marketValue: cumQ * unitPrice,
+                totalCost: cumC,
+                addedQuantity: periodAddedQ,
+                addedPrincipal: periodAddedC
+            });
         }
         return history;
     }

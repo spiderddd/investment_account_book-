@@ -32,57 +32,87 @@ export const SnapshotService = {
     },
 
     getHistoryGraph: async () => {
-        // REFACTOR: Calculate history dynamically from Transactions + Prices
-        // For performance in this specific "Graph" endpoint, we can still use the 
-        // snapshots header table which caches the totals. 
-        // But for asset breakdowns, we should aggregate transactions.
+        // OPTIMIZED: Fetch all data first, then aggregate in memory to avoid N+1 queries.
         
-        // 1. Get all Snapshot Headers (Dates we care about)
+        // 1. Fetch all Snapshots (Time points)
         const snapshots = await getQuery("SELECT id, date, total_value, total_invested FROM snapshots ORDER BY date ASC");
         
-        const result = [];
+        // 2. Fetch all Transactions (The Flow)
+        const allTxs = await getQuery("SELECT asset_id, date, quantity_change, cost_change FROM transactions ORDER BY date ASC");
         
-        for (const s of snapshots) {
-            // Calculate Asset positions at this date
-            const assetsSql = `
-                SELECT 
-                    t.asset_id as assetId,
-                    SUM(t.quantity_change) as quantity,
-                    SUM(t.cost_change) as totalCost
-                FROM transactions t
-                WHERE t.date <= ?
-                GROUP BY t.asset_id
-                HAVING quantity != 0
-            `;
-            const assetsState = await getQuery(assetsSql, [s.date]);
+        // 3. Fetch all Market Prices (The Valuation)
+        const allPrices = await getQuery("SELECT asset_id, date, price FROM market_prices ORDER BY date ASC");
+        
+        // 4. In-Memory Aggregation
+        // We will build the result by iterating snapshots and calculating state
+        // Group transactions and prices by Asset ID for faster lookup
+        const txsByAsset = new Map();
+        allTxs.forEach(tx => {
+            if (!txsByAsset.has(tx.asset_id)) txsByAsset.set(tx.asset_id, []);
+            txsByAsset.get(tx.asset_id).push(tx);
+        });
 
-            const assetsWithPrice = await Promise.all(assetsState.map(async (a) => {
-                // Find price: Exact match OR Closest previous price
-                const priceRow = await getQuery(`
-                    SELECT price FROM market_prices 
-                    WHERE asset_id = ? AND date <= ? 
-                    ORDER BY date DESC LIMIT 1
-                `, [a.assetId, s.date]);
+        const pricesByAsset = new Map();
+        allPrices.forEach(p => {
+             if (!pricesByAsset.has(p.asset_id)) pricesByAsset.set(p.asset_id, []);
+             pricesByAsset.get(p.asset_id).push(p);
+        });
+
+        const result = snapshots.map(s => {
+            const snapshotDate = s.date;
+            
+            // For each asset that has transactions, calculate its state at this snapshot date
+            const assetIds = new Set([...txsByAsset.keys()]); // Assets involved in transactions
+            
+            const assetsWithPrice = [];
+
+            for (const assetId of assetIds) {
+                const assetTxs = txsByAsset.get(assetId);
                 
-                const price = priceRow.length > 0 ? priceRow[0].price : 0; // Or fallback to 1 for cash? 
+                // Aggregate Holdings up to snapshotDate
+                let quantity = 0;
+                let totalCost = 0;
                 
-                return {
-                    assetId: a.assetId,
-                    quantity: a.quantity,
+                // Since assetTxs are ordered by date ASC, we can just iterate until we pass snapshotDate
+                // Optimization: Binary search is better for huge arrays, but linear scan is fine for personal finance scale
+                for (const tx of assetTxs) {
+                    if (tx.date > snapshotDate) break; // optimization due to sort
+                    quantity += tx.quantity_change;
+                    totalCost += tx.cost_change;
+                }
+
+                // If quantity is effectively zero, skip this asset for this month
+                if (Math.abs(quantity) < 0.000001) continue;
+
+                // Find Price at snapshotDate
+                const assetPrices = pricesByAsset.get(assetId) || [];
+                let price = 0;
+                // Find the latest price <= snapshotDate
+                // Reverse iterate since we want the latest
+                for (let i = assetPrices.length - 1; i >= 0; i--) {
+                    if (assetPrices[i].date <= snapshotDate) {
+                        price = assetPrices[i].price;
+                        break;
+                    }
+                }
+
+                assetsWithPrice.push({
+                    assetId: assetId,
+                    quantity: quantity,
                     unitPrice: price,
-                    marketValue: a.quantity * price,
-                    totalCost: a.totalCost
-                };
-            }));
+                    marketValue: quantity * price,
+                    totalCost: totalCost
+                });
+            }
 
-            result.push({
+            return {
                 id: s.id,
                 date: s.date,
                 totalValue: s.total_value,
                 totalInvested: s.total_invested,
                 assets: assetsWithPrice
-            });
-        }
+            };
+        });
         
         return result;
     },

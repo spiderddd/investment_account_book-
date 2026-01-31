@@ -41,7 +41,9 @@ db.serialize(() => {
     try {
         // 1. 清空现有数据 (顺序很重要)
         console.log("🧹 清空现有表数据...");
-        db.run("DELETE FROM positions");
+        // db.run("DELETE FROM positions"); // LEGACY TABLE REMOVED
+        db.run("DELETE FROM transactions");
+        db.run("DELETE FROM market_prices");
         db.run("DELETE FROM snapshots");
         db.run("DELETE FROM strategy_targets");
         db.run("DELETE FROM strategy_layers");
@@ -139,31 +141,48 @@ db.serialize(() => {
             stmt.finalize();
         }
 
-        // 7. 导入 Positions (持仓) - 关键逻辑处理
-        if (tables.positions && tables.positions.length > 0) {
-            console.log(`📥 导入 Positions (${tables.positions.length} 条)...`);
-            // 注意：新表结构去掉了 strategy_id, market_value (计算字段), asset_name (联表字段)
-            const stmt = db.prepare(`
-                INSERT INTO positions 
-                (id, snapshot_id, asset_id, quantity, price, total_cost, added_quantity, added_principal, created_at) 
+        // 7. 导入 Transactions (如果有导出)
+        if (tables.transactions && tables.transactions.length > 0) {
+             console.log(`📥 导入 Transactions (${tables.transactions.length} 条)...`);
+             const stmt = db.prepare(`
+                INSERT INTO transactions (id, asset_id, snapshot_id, date, type, quantity_change, cost_change, note, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `);
-            
-            tables.positions.forEach(row => {
+             `);
+             tables.transactions.forEach(row => {
                 stmt.run(
                     row.id,
-                    row.snapshot_id,
                     row.asset_id,
-                    row.quantity,
-                    row.price,
-                    row.total_cost,
-                    row.added_quantity || 0,
-                    row.added_principal || 0,
+                    row.snapshot_id,
+                    row.date,
+                    row.type,
+                    row.quantity_change,
+                    row.cost_change,
+                    row.note,
                     row.created_at || now
                 );
+             });
+             stmt.finalize();
+        }
+
+        // 8. 导入 Market Prices (如果有导出)
+        if (tables.market_prices && tables.market_prices.length > 0) {
+            console.log(`📥 导入 Market Prices (${tables.market_prices.length} 条)...`);
+            const stmt = db.prepare(`
+                INSERT INTO market_prices (id, asset_id, date, price, source, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            `);
+            tables.market_prices.forEach(row => {
+               stmt.run(
+                   row.id,
+                   row.asset_id,
+                   row.date,
+                   row.price,
+                   row.source,
+                   row.updated_at || now
+               );
             });
             stmt.finalize();
-        }
+       }
 
         db.run("PRAGMA foreign_keys = ON");
         db.run("COMMIT");

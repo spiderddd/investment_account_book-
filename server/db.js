@@ -70,22 +70,10 @@ CREATE TABLE IF NOT EXISTS snapshots (
     updated_at INTEGER
 );
 
--- LEGACY TABLE (Kept for migration safety, but logic will move to transactions)
-CREATE TABLE IF NOT EXISTS positions (
-    id TEXT PRIMARY KEY,
-    snapshot_id TEXT NOT NULL,
-    asset_id TEXT NOT NULL,
-    quantity REAL NOT NULL,
-    price REAL NOT NULL,
-    total_cost REAL,
-    added_quantity REAL DEFAULT 0,
-    added_principal REAL DEFAULT 0,
-    created_at INTEGER,
-    FOREIGN KEY(snapshot_id) REFERENCES snapshots(id) ON DELETE CASCADE,
-    FOREIGN KEY(asset_id) REFERENCES assets(id)
-);
+-- LEGACY TABLE 'positions' REMOVED. 
+-- Data logic has fully migrated to 'transactions' (ledger) + 'market_prices' (time series).
 
--- NEW: Independent Price History (Crawler Friendly)
+-- Independent Price History (Crawler Friendly)
 CREATE TABLE IF NOT EXISTS market_prices (
     id TEXT PRIMARY KEY,
     asset_id TEXT NOT NULL,
@@ -96,7 +84,7 @@ CREATE TABLE IF NOT EXISTS market_prices (
     UNIQUE(asset_id, date)
 );
 
--- NEW: Ledger / Transaction Table (Source of Truth for Quantity/Cost)
+-- Ledger / Transaction Table (Source of Truth for Quantity/Cost)
 CREATE TABLE IF NOT EXISTS transactions (
     id TEXT PRIMARY KEY,
     asset_id TEXT NOT NULL,
