@@ -14,6 +14,7 @@ import { initDB } from './server/db.js';
 import assetsRouter from './server/routes/assets.js';
 import strategiesRouter from './server/routes/strategies.js';
 import snapshotsRouter from './server/routes/snapshots.js';
+import dashboardRouter from './server/routes/dashboard.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,6 +32,7 @@ initDB();
 app.use('/api/assets', assetsRouter);
 app.use('/api/strategies', strategiesRouter);
 app.use('/api/snapshots', snapshotsRouter);
+app.use('/api/dashboard', dashboardRouter);
 
 // --- Static Files ---
 const distPath = path.join(__dirname, 'dist');
