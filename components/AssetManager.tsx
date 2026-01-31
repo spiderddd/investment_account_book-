@@ -30,6 +30,7 @@ interface AssetHistoryRecord {
   roi: number;
   addedQuantity: number;
   addedPrincipal: number;
+  note?: string;
 }
 
 export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, strategies, onUpdate, onCreate, onEdit, onDelete }) => {
@@ -77,6 +78,10 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                         existing.profit = existing.marketValue - existing.totalCost;
                         existing.roi = existing.totalCost > 0 ? (existing.profit / existing.totalCost * 100) : 0;
                         existing.unitPrice = existing.quantity > 0 ? existing.marketValue / existing.quantity : row.unitPrice;
+                        // Concatenate notes if merging records
+                        if (row.note) {
+                            existing.note = existing.note ? existing.note + '; ' + row.note : row.note;
+                        }
                     } else {
                         aggMap.set(row.date, {
                             date: row.date,
@@ -87,7 +92,8 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                             profit: row.marketValue - row.totalCost,
                             roi: row.totalCost > 0 ? ((row.marketValue - row.totalCost) / row.totalCost * 100) : 0,
                             addedQuantity: row.addedQuantity,
-                            addedPrincipal: row.addedPrincipal
+                            addedPrincipal: row.addedPrincipal,
+                            note: row.note || ''
                         });
                     }
                 });
@@ -563,6 +569,7 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                                                 <th className="px-4 py-3 text-right">总成本</th>
                                                 <th className="px-4 py-3 text-right">市值</th>
                                                 <th className="px-4 py-3 text-right">盈亏</th>
+                                                <th className="px-4 py-3 text-left w-32">备注</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
@@ -589,6 +596,9 @@ export const AssetManager: React.FC<AssetManagerProps> = ({ assets, snapshots, s
                                                     <td className="px-4 py-3 text-right font-bold text-slate-800">¥{row.marketValue.toLocaleString()}</td>
                                                     <td className={`px-4 py-3 text-right font-medium ${row.profit >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
                                                         {row.profit >= 0 ? '+' : ''}{row.profit.toLocaleString()}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-left text-xs text-slate-500 max-w-[200px] truncate" title={row.note}>
+                                                        {row.note || '-'}
                                                     </td>
                                                 </tr>
                                             ))}

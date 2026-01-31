@@ -52,8 +52,8 @@ export const AssetService = {
     getHistory: async (assetId) => {
         // OPTIMIZED: Fetch all raw data first
         
-        // 1. Get all transactions for this asset
-        const txs = await getQuery("SELECT date, quantity_change, cost_change FROM transactions WHERE asset_id = ? ORDER BY date ASC", [assetId]);
+        // 1. Get all transactions for this asset (Include Note)
+        const txs = await getQuery("SELECT date, quantity_change, cost_change, note FROM transactions WHERE asset_id = ? ORDER BY date ASC", [assetId]);
         
         // 2. Get all prices for this asset
         const prices = await getQuery("SELECT date, price FROM market_prices WHERE asset_id = ? ORDER BY date ASC", [assetId]);
@@ -74,6 +74,7 @@ export const AssetService = {
             
             let periodAddedQ = 0;
             let periodAddedC = 0;
+            let periodNotes = [];
             
             // Advance transaction pointer until we pass the snapshot date
             while (txIndex < txs.length && txs[txIndex].date <= snapDate) {
@@ -85,6 +86,10 @@ export const AssetService = {
                 // Note: This logic assumes snapshots are chronologically processed.
                 periodAddedQ += t.quantity_change;
                 periodAddedC += t.cost_change;
+                
+                if (t.note && t.note.trim().length > 0) {
+                    periodNotes.push(t.note);
+                }
                 
                 txIndex++;
             }
@@ -113,7 +118,8 @@ export const AssetService = {
                 marketValue: cumQ * unitPrice,
                 totalCost: cumC,
                 addedQuantity: periodAddedQ,
-                addedPrincipal: periodAddedC
+                addedPrincipal: periodAddedC,
+                note: periodNotes.join('; ')
             });
         }
         return history;
