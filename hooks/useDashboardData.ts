@@ -2,13 +2,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { StrategyVersion, SnapshotItem } from '../types';
 import { StorageService } from '../services/storageService';
-import { 
-    getStrategyForDate, 
-    getSnapshotMetrics, 
-    calculateAllocationData, 
-    calculateHistoryData, 
-    calculateBreakdownData 
-} from '../utils/calculators';
+import { getStrategyForDate } from '../utils/calculators';
 
 type ViewMode = 'strategy' | 'total';
 type TimeRange = 'all' | 'ytd' | '1y';
@@ -18,28 +12,15 @@ export const useDashboardData = (strategies: StrategyVersion[], snapshots: Snaps
   const [timeRange, setTimeRange] = useState<TimeRange>('all');
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
 
-  // 1. History Data State (Lightweight with assets for charts)
-  // This is the source of truth for ALL available history dates now that 'snapshots' prop is paginated.
-  const [historySnapshots, setHistorySnapshots] = useState<SnapshotItem[]>([]);
-  
-  // 2. Detail State (Full details for Pie/Breakdown)
-  const [detailSnapshots, setDetailSnapshots] = useState<{start: SnapshotItem | null, end: SnapshotItem | null}>({ start: null, end: null });
+  // Data States
   const [loadingDetails, setLoadingDetails] = useState(false);
+  const [endMetrics, setEndMetrics] = useState({ value: 0, invested: 0, profit: 0, returnRate: 0, periodLabel: '...' });
+  const [startMetrics, setStartMetrics] = useState({ value: 0, invested: 0 }); // Legacy support
+  const [allocationData, setAllocationData] = useState<any[]>([]);
+  const [historyData, setHistoryData] = useState<any[]>([]);
+  const [breakdownData, setBreakdownData] = useState<any[]>([]);
 
-  // Initial Load of History Data
-  useEffect(() => {
-      StorageService.getSnapshotsHistory().then(data => {
-          setHistorySnapshots(data);
-      });
-  }, []);
-
-  const sortedAllSnapshots = useMemo(() => {
-    // We prefer historySnapshots as it contains the full timeline. 
-    // Fallback to prop 'snapshots' if history not loaded yet (though charts might be empty)
-    const source = historySnapshots.length > 0 ? historySnapshots : snapshots;
-    return [...source].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [historySnapshots, snapshots]);
-
+  // Derived State for UI Labels
   const rangeConfig = useMemo(() => {
     if (timeRange === 'all') return { startDate: null, label: '历史累计' };
     const now = new Date();
@@ -54,99 +35,54 @@ export const useDashboardData = (strategies: StrategyVersion[], snapshots: Snaps
     }
   }, [timeRange]);
 
-  const filteredSnapshots = useMemo(() => {
-    if (!rangeConfig.startDate) return sortedAllSnapshots;
-    return sortedAllSnapshots.filter(s => s.date >= rangeConfig.startDate!);
-  }, [sortedAllSnapshots, rangeConfig]);
+  const activeStrategyEnd = useMemo(() => {
+      // Find the latest snapshot date from props to determine active strategy for labels
+      if (snapshots.length === 0) return null;
+      const sorted = [...snapshots].sort((a,b) => b.date.localeCompare(a.date));
+      return getStrategyForDate(strategies, sorted[0].date);
+  }, [strategies, snapshots]);
 
-  // Determine which IDs we need to fetch details for (End points for Pie/Table)
-  const { startId, endId } = useMemo(() => {
-    if (sortedAllSnapshots.length === 0) return { startId: null, endId: null };
-    const end = filteredSnapshots[filteredSnapshots.length - 1] || sortedAllSnapshots[sortedAllSnapshots.length - 1];
-    
-    let start = null;
-    if (timeRange !== 'all') {
-        const firstInWindow = filteredSnapshots[0];
-        if (firstInWindow) {
-            const idx = sortedAllSnapshots.findIndex(s => s.id === firstInWindow.id);
-            start = idx > 0 ? sortedAllSnapshots[idx - 1] : null;
-        }
-    }
-    
-    return { startId: start?.id || null, endId: end?.id || null };
-  }, [sortedAllSnapshots, filteredSnapshots, timeRange]);
-
-  // Effect: Fetch Full Details for Start/End points
+  // Fetch Data Effect
   useEffect(() => {
     let isMounted = true;
-    const loadDetails = async () => {
+    
+    const fetchData = async () => {
         setLoadingDetails(true);
-        const promises = [];
-        if (startId) promises.push(StorageService.getSnapshot(startId));
-        else promises.push(Promise.resolve(null));
+        try {
+            const [metrics, alloc, trend, breakdown] = await Promise.all([
+                StorageService.getDashboardMetrics(viewMode, timeRange),
+                StorageService.getDashboardAllocation(viewMode, selectedLayerId),
+                StorageService.getDashboardTrend(viewMode, selectedLayerId, rangeConfig.startDate),
+                StorageService.getDashboardBreakdown(viewMode, timeRange, selectedLayerId)
+            ]);
 
-        if (endId) promises.push(StorageService.getSnapshot(endId));
-        else promises.push(Promise.resolve(null));
+            if (isMounted) {
+                // Map backend metrics to UI expectations
+                setEndMetrics({
+                    value: metrics.endValue,
+                    invested: metrics.endInvested,
+                    profit: metrics.profit,
+                    returnRate: metrics.returnRate,
+                    periodLabel: metrics.periodLabel
+                });
+                // Start metrics are implicit in the profit calc now, but UI might expect object structure
+                setStartMetrics({ value: 0, invested: 0 }); 
 
-        const [startData, endData] = await Promise.all(promises);
-        
-        if (isMounted) {
-            setDetailSnapshots({ start: startData, end: endData });
-            setLoadingDetails(false);
+                setAllocationData(alloc);
+                setHistoryData(trend);
+                setBreakdownData(breakdown);
+            }
+        } catch (error) {
+            console.error("Failed to load dashboard data", error);
+        } finally {
+            if (isMounted) setLoadingDetails(false);
         }
     };
 
-    if (startId || endId) {
-        // Optimization: if we already have the correct data in memory, don't flicker loading
-        if (detailSnapshots.end?.id === endId && detailSnapshots.start?.id === startId) {
-            // Do nothing, data matches
-        } else {
-            loadDetails();
-        }
-    } else {
-        setDetailSnapshots({ start: null, end: null });
-        setLoadingDetails(false);
-    }
-    
+    fetchData();
+
     return () => { isMounted = false; };
-  }, [startId, endId]);
-
-
-  const activeStrategyEnd = useMemo(() => {
-      // Use detail date or fallback to filtered list date
-      const date = detailSnapshots.end?.date || (filteredSnapshots.length > 0 ? filteredSnapshots[filteredSnapshots.length-1].date : null);
-      if (!date) return null;
-      return getStrategyForDate(strategies, date);
-  }, [strategies, detailSnapshots.end, filteredSnapshots]);
-
-  // Metrics: Use Details if available, otherwise fallback to summary list logic (which only works for Total view)
-  const endMetrics = useMemo(() => getSnapshotMetrics(detailSnapshots.end || snapshots.find(s => s.id === endId) || null, viewMode, strategies), [detailSnapshots.end, viewMode, strategies, endId, snapshots]);
-  const startMetrics = useMemo(() => getSnapshotMetrics(detailSnapshots.start || snapshots.find(s => s.id === startId) || null, viewMode, strategies), [detailSnapshots.start, viewMode, strategies, startId, snapshots]);
-
-  // Allocation (Pie Chart): STRICTLY relies on detailed data
-  const allocationData = useMemo(() => {
-      // If details aren't loaded yet, return empty to prevent wrong "Total" data being shown in "Strategy" mode
-      if (!detailSnapshots.end) return [];
-      return calculateAllocationData(detailSnapshots.end, activeStrategyEnd, viewMode, selectedLayerId);
-  }, [detailSnapshots.end, activeStrategyEnd, viewMode, selectedLayerId]);
-
-  // History (Line Chart): Uses the separately fetched 'historySnapshots' which contains asset breakdown
-  const historyData = useMemo(() => {
-      // Filter the history dataset based on time range
-      let targetHistory = historySnapshots;
-      if (rangeConfig.startDate) {
-          targetHistory = historySnapshots.filter(s => s.date >= rangeConfig.startDate!);
-      }
-      targetHistory = targetHistory.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-      
-      return calculateHistoryData(targetHistory, strategies, viewMode, selectedLayerId, activeStrategyEnd);
-  }, [historySnapshots, rangeConfig, strategies, viewMode, selectedLayerId, activeStrategyEnd]);
-
-  // Breakdown (Table): Relies on detailed start/end
-  const breakdownData = useMemo(() => {
-      if (!detailSnapshots.end) return []; // Wait for details
-      return calculateBreakdownData(detailSnapshots.start, detailSnapshots.end, activeStrategyEnd, viewMode, selectedLayerId);
-  }, [detailSnapshots.start, detailSnapshots.end, activeStrategyEnd, viewMode, selectedLayerId]);
+  }, [viewMode, timeRange, selectedLayerId, rangeConfig.startDate]);
 
   const breakdownTotals = useMemo(() => {
     return breakdownData.reduce((acc, row) => ({
@@ -158,15 +94,27 @@ export const useDashboardData = (strategies: StrategyVersion[], snapshots: Snaps
     }), { endVal: 0, endCost: 0, changeVal: 0, changeInput: 0, profit: 0 });
   }, [breakdownData]);
 
+  // Determine start/end snapshot labels for UI (approximate from props is fine for labels)
+  const uiSnapshots = useMemo(() => {
+      const sorted = [...snapshots].sort((a,b) => a.date.localeCompare(b.date));
+      const end = sorted[sorted.length - 1] || null;
+      let start = null;
+      if (rangeConfig.startDate) {
+          start = sorted.find(s => s.date >= rangeConfig.startDate!) || sorted[0];
+      }
+      return { start, end };
+  }, [snapshots, rangeConfig]);
+
   return {
     viewMode, setViewMode,
     timeRange, setTimeRange,
     selectedLayerId, setSelectedLayerId,
     rangeConfig,
-    startSnapshot: detailSnapshots.start, 
-    endSnapshot: detailSnapshots.end,
+    startSnapshot: uiSnapshots.start, 
+    endSnapshot: uiSnapshots.end,
     loadingDetails,
-    endMetrics, startMetrics,
+    endMetrics, 
+    startMetrics, // Kept for interface compatibility
     activeStrategyEnd,
     allocationData,
     historyData,

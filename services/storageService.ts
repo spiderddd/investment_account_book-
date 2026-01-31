@@ -8,6 +8,46 @@ export const generateId = (): string => {
 };
 
 export const StorageService = {
+  // --- Dashboard API (New) ---
+  getDashboardMetrics: async (viewMode: string, timeRange: string) => {
+      try {
+          const res = await fetch(`${API_BASE}/dashboard/metrics?viewMode=${viewMode}&timeRange=${timeRange}`);
+          if (!res.ok) throw new Error('Failed to fetch metrics');
+          return await res.json();
+      } catch (e) { console.error(e); return { endValue: 0, endInvested: 0, profit: 0, returnRate: 0 }; }
+  },
+
+  getDashboardAllocation: async (viewMode: string, layerId: string | null) => {
+      try {
+          let url = `${API_BASE}/dashboard/allocation?viewMode=${viewMode}`;
+          if (layerId) url += `&layerId=${layerId}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error('Failed to fetch allocation');
+          return await res.json();
+      } catch (e) { console.error(e); return []; }
+  },
+
+  getDashboardTrend: async (viewMode: string, layerId: string | null, startDate: string | null) => {
+      try {
+          let url = `${API_BASE}/dashboard/trend?viewMode=${viewMode}`;
+          if (layerId) url += `&layerId=${layerId}`;
+          if (startDate) url += `&startDate=${startDate}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error('Failed to fetch trend');
+          return await res.json();
+      } catch (e) { console.error(e); return []; }
+  },
+
+  getDashboardBreakdown: async (viewMode: string, timeRange: string, layerId: string | null) => {
+      try {
+          let url = `${API_BASE}/dashboard/breakdown?viewMode=${viewMode}&timeRange=${timeRange}`;
+          if (layerId) url += `&layerId=${layerId}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error('Failed to fetch breakdown');
+          return await res.json();
+      } catch (e) { console.error(e); return []; }
+  },
+
   // --- Assets ---
   getAssets: async (): Promise<Asset[]> => {
     try {
