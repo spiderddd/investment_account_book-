@@ -9,6 +9,7 @@ export interface AssetRowInput {
   name: string;
   category: AssetCategory;
   price: string;
+  transactionType: 'buy' | 'sell';
   quantityChange: string; 
   costChange: string; 
   prevQuantity: number;
@@ -63,6 +64,11 @@ export const useSnapshotForm = (
                     initialRows = existing.assets.map(a => {
                         const realAsset = assets.find(def => def.id === a.assetId);
                         const prevAsset = prevDetails?.assets?.find(pa => pa.assetId === a.assetId);
+                        
+                        // Detect transaction type based on negative signs
+                        // Default to 'buy' (positive) if 0 or positive
+                        // If either quantity or cost change is negative, we assume it's a 'sell' operation
+                        const isSell = a.addedQuantity < 0 || a.addedPrincipal < 0;
 
                         return {
                             recordId: a.id,
@@ -70,8 +76,10 @@ export const useSnapshotForm = (
                             name: realAsset ? realAsset.name : a.name, 
                             category: realAsset ? realAsset.type : a.category, 
                             price: a.unitPrice.toString(),
-                            quantityChange: a.addedQuantity.toString(),
-                            costChange: a.addedPrincipal.toString(),
+                            transactionType: isSell ? 'sell' : 'buy',
+                            // Convert to absolute string for input fields
+                            quantityChange: Math.abs(a.addedQuantity).toString(),
+                            costChange: Math.abs(a.addedPrincipal).toString(),
                             // In edit mode, prev is current minus change, unless we have real prev data
                             prevQuantity: prevAsset ? prevAsset.quantity : (a.quantity - a.addedQuantity),
                             prevCost: prevAsset ? prevAsset.totalCost : (a.totalCost - a.addedPrincipal)
@@ -92,6 +100,7 @@ export const useSnapshotForm = (
                             name: realAsset ? realAsset.name : item.targetName, 
                             category: realAsset ? realAsset.type : 'security', 
                             price: prevAsset ? prevAsset.unitPrice.toString() : '',
+                            transactionType: 'buy',
                             quantityChange: '',
                             costChange: '',
                             prevQuantity: prevAsset ? prevAsset.quantity : 0,
@@ -111,6 +120,7 @@ export const useSnapshotForm = (
                                 name: realAsset ? realAsset.name : a.name,
                                 category: realAsset ? realAsset.type : a.category,
                                 price: a.unitPrice.toString(),
+                                transactionType: 'buy',
                                 quantityChange: '',
                                 costChange: '',
                                 prevQuantity: a.quantity,
@@ -133,13 +143,19 @@ export const useSnapshotForm = (
         }
     };
 
-    const updateRow = (index: number, field: 'price' | 'quantityChange' | 'costChange', value: string) => {
+    const updateRow = (index: number, field: 'price' | 'quantityChange' | 'costChange' | 'transactionType', value: string) => {
         const newRows = [...rows];
         const row = newRows[index];
-        row[field] = value;
-        // Auto-link quantity to cost for cash-like assets
-        if ((row.category === 'fixed' || row.category === 'wealth') && field === 'costChange') {
-            row.quantityChange = value;
+        
+        if (field === 'transactionType') {
+            row.transactionType = value as 'buy' | 'sell';
+        } else {
+            row[field] = value;
+            // Auto-link quantity to cost for cash-like assets (Deposit/Withdraw)
+            // Note: value here is absolute, so we just copy it.
+            if ((row.category === 'fixed' || row.category === 'wealth') && field === 'costChange') {
+                row.quantityChange = value;
+            }
         }
         setRows(newRows);
     };
@@ -158,6 +174,7 @@ export const useSnapshotForm = (
                 name: asset.name,
                 category: asset.type,
                 price: isCashLike ? '1' : '',
+                transactionType: 'buy',
                 quantityChange: '',
                 costChange: '',
                 prevQuantity: 0, 
@@ -177,8 +194,16 @@ export const useSnapshotForm = (
     const prepareSubmission = (): SnapshotItem => {
         const finalAssets: AssetRecord[] = rows.map(r => {
             const price = (r.category === 'fixed' || r.category === 'wealth') ? 1 : (parseFloat(r.price) || 0);
-            const qChange = parseFloat(r.quantityChange) || 0;
-            const cChange = parseFloat(r.costChange) || 0;
+            
+            // Apply sign based on transaction type
+            const sign = r.transactionType === 'sell' ? -1 : 1;
+            
+            const qChangeAbs = parseFloat(r.quantityChange) || 0;
+            const cChangeAbs = parseFloat(r.costChange) || 0;
+            
+            const qChange = qChangeAbs * sign;
+            const cChange = cChangeAbs * sign;
+
             const newQuantity = r.prevQuantity + qChange;
             const newCost = r.prevCost + cChange;
 

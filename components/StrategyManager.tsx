@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -509,7 +510,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-slate-500 mb-1">目标仓位 (%)</label>
-                        <input required type="number" step="0.1" className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" value={modalLayer.weight} onChange={e => setModalLayer({...modalLayer, weight: e.target.value})} />
+                        <input required type="number" step="1" className="w-full border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" value={modalLayer.weight} onChange={e => setModalLayer({...modalLayer, weight: e.target.value})} />
                     </div>
                     <div>
                         <label className="block text-xs font-bold text-slate-500 mb-1">备注说明</label>
@@ -551,7 +552,7 @@ const StrategyManager: React.FC<StrategyManagerProps> = ({ strategies: versions,
                         </label>
                         <div className="flex items-center gap-2">
                              <input 
-                                type="number" step="0.1" 
+                                type="number" step="1" 
                                 className="flex-1 border rounded px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none" 
                                 value={modalAsset.weight} 
                                 onChange={e => setModalAsset({...modalAsset, weight: e.target.value})} 

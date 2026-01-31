@@ -103,7 +103,10 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
   if (viewMode === 'entry') {
      const totalAssetsVal = rows.reduce((sum, r) => {
        const p = parseFloat(r.price) || (r.category === 'fixed' || r.category === 'wealth' ? 1 : 0);
-       const q = r.prevQuantity + (parseFloat(r.quantityChange) || 0);
+       // Calculate effective quantity change based on sign
+       const sign = r.transactionType === 'sell' ? -1 : 1;
+       const qChange = (parseFloat(r.quantityChange) || 0) * sign;
+       const q = r.prevQuantity + qChange;
        return sum + (p * q);
     }, 0);
     
@@ -192,28 +195,44 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
 
           {/* Main Table */}
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse min-w-[900px]">
+            <table className="w-full text-left border-collapse min-w-[1000px]">
               <thead>
                 <tr className="bg-slate-50 text-xs text-slate-500 uppercase font-semibold">
-                  <th className="p-4 w-64 sticky left-0 bg-slate-50 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">资产名称</th>
-                  <th className="p-4 w-32 text-right">当前单价</th>
-                  <th className="p-4 w-40 text-right bg-blue-50/30">本月变动 (份额)</th>
+                  <th className="p-4 w-56 sticky left-0 bg-slate-50 z-10 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.1)]">资产名称</th>
+                  <th className="p-4 w-28 text-right">当前单价</th>
+                  <th className="p-4 w-56 text-right bg-blue-50/30">
+                    <div className="flex justify-end gap-2 items-center">
+                        本月变动 (份额)
+                    </div>
+                  </th>
                   <th className="p-4 w-40 text-right bg-rose-50/30">本月流水 (本金)</th>
                   <th className="p-4 w-32 text-right">持有总量</th>
                   <th className="p-4 w-40 text-right">当前市值</th>
-                  <th className="p-4 w-16 text-center"></th>
+                  <th className="p-4 w-12 text-center"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((row, idx) => {
                   const isCashLike = row.category === 'fixed' || row.category === 'wealth';
                   const p = parseFloat(row.price) || (isCashLike ? 1 : 0);
-                  const qChange = parseFloat(row.quantityChange) || 0;
-                  const cChange = parseFloat(row.costChange) || 0;
-                  const currentQ = row.prevQuantity + qChange;
+                  
+                  // Calculate display values based on transaction type
+                  const sign = row.transactionType === 'sell' ? -1 : 1;
+                  const qChangeAbs = parseFloat(row.quantityChange) || 0;
+                  const cChangeAbs = parseFloat(row.costChange) || 0;
+                  
+                  // Calculate implied signed values
+                  const qChangeSigned = qChangeAbs * sign;
+                  const cChangeSigned = cChangeAbs * sign;
+                  
+                  const currentQ = row.prevQuantity + qChangeSigned;
                   const currentVal = currentQ * p;
                   
-                  const impliedProfit = isCashLike ? (qChange - cChange) : 0;
+                  // Profit calc for fixed assets: Profit = (Q_change - C_change)
+                  const impliedProfit = isCashLike ? (qChangeSigned - cChangeSigned) : 0;
+                  
+                  // Determine step based on category
+                  const quantityStep = row.category === 'security' ? "100" : (row.category === 'fund' ? "0.01" : "1");
 
                   return (
                     <tr key={row.recordId} className="hover:bg-slate-50 group">
@@ -230,19 +249,38 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                       </td>
                       <td className="p-4">
                         <input 
-                           type="number" step="0.0001" placeholder="0.00"
+                           type="number" step="0.001" placeholder="0.000"
                            className={`w-full text-right px-2 py-1 border rounded focus:ring-2 focus:ring-blue-500 outline-none ${isCashLike ? 'bg-slate-100 text-slate-400 border-transparent cursor-not-allowed' : 'border-slate-200'}`}
-                           value={isCashLike ? '1.00' : row.price} 
+                           value={isCashLike ? '1.000' : row.price} 
                            onChange={e => !isCashLike && updateRow(idx, 'price', e.target.value)}
                            disabled={isCashLike} 
                         />
                       </td>
                       <td className="p-4 bg-blue-50/30 relative">
-                        <input 
-                           type="number" step="0.0001" placeholder="0"
-                           className="w-full text-right px-2 py-1 border border-blue-200 rounded focus:ring-2 focus:ring-blue-500 outline-none text-blue-700 font-medium"
-                           value={row.quantityChange} onChange={e => updateRow(idx, 'quantityChange', e.target.value)}
-                        />
+                        <div className="flex items-center gap-2">
+                             {/* Buy/Sell Toggle */}
+                             <div className="flex bg-white rounded-md border border-blue-200 p-0.5 shrink-0">
+                                <button 
+                                    onClick={() => updateRow(idx, 'transactionType', 'buy')}
+                                    className={`px-2 py-0.5 text-[10px] font-bold rounded ${row.transactionType === 'buy' ? 'bg-blue-100 text-blue-700' : 'text-slate-400 hover:text-slate-600'}`}
+                                >
+                                    买入
+                                </button>
+                                <button 
+                                    onClick={() => updateRow(idx, 'transactionType', 'sell')}
+                                    className={`px-2 py-0.5 text-[10px] font-bold rounded ${row.transactionType === 'sell' ? 'bg-rose-100 text-rose-700' : 'text-slate-400 hover:text-slate-600'}`}
+                                >
+                                    卖出
+                                </button>
+                            </div>
+                            <input 
+                                type="number" step={quantityStep} placeholder="0"
+                                className={`w-full text-right px-2 py-1 border border-blue-200 rounded focus:ring-2 focus:ring-blue-500 outline-none font-medium ${row.transactionType === 'sell' ? 'text-rose-600' : 'text-blue-700'}`}
+                                value={row.quantityChange} 
+                                onChange={e => updateRow(idx, 'quantityChange', e.target.value)}
+                            />
+                        </div>
+                        
                          {isCashLike && Math.abs(impliedProfit) > 0.01 && (
                             <div className={`text-[10px] text-right mt-1 font-medium ${impliedProfit > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
                                {impliedProfit > 0 ? '利息/收益 +' : '费用 -'}{Math.abs(impliedProfit).toLocaleString()}
@@ -252,12 +290,12 @@ const SnapshotManager: React.FC<SnapshotManagerProps> = ({
                       <td className="p-4 bg-rose-50/30">
                          <input 
                            type="number" step="0.01" placeholder="0.00"
-                           className="w-full text-right px-2 py-1 border border-rose-200 rounded focus:ring-2 focus:ring-rose-500 outline-none text-rose-700 font-medium"
+                           className={`w-full text-right px-2 py-1 border border-rose-200 rounded focus:ring-2 focus:ring-rose-500 outline-none font-medium ${row.transactionType === 'sell' ? 'text-rose-600' : 'text-rose-700'}`}
                            value={row.costChange} onChange={e => updateRow(idx, 'costChange', e.target.value)}
                         />
                       </td>
                       <td className="p-4 text-right text-slate-600">
-                        <div>{currentQ.toLocaleString(undefined, {maximumFractionDigits: 2})}</div>
+                        <div className="font-bold">{currentQ.toLocaleString(undefined, {maximumFractionDigits: 2})}</div>
                         {row.prevQuantity > 0 && <div className="text-[10px] text-slate-400">前: {row.prevQuantity.toLocaleString()}</div>}
                       </td>
                       <td className="p-4 text-right font-bold text-slate-800">
