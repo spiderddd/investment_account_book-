@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS strategy_targets (
     id TEXT PRIMARY KEY,
     layer_id TEXT NOT NULL,
     asset_id TEXT NOT NULL,
-    target_name TEXT, 
+    -- target_name removed: Always use asset name via JOIN
     weight REAL NOT NULL, 
     color TEXT,
     note TEXT,

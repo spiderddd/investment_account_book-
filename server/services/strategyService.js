@@ -7,10 +7,11 @@ export const StrategyService = {
         // 1. Fetch flat data
         const versions = await getQuery("SELECT id, name, description, start_date as startDate, status FROM strategy_versions ORDER BY start_date DESC");
         const layers = await getQuery("SELECT id, version_id as versionId, name, weight, description FROM strategy_layers ORDER BY sort_order ASC, weight DESC");
+        // Optimized: Removed target_name storage, mapping directly from assets table
         const targets = await getQuery(`
             SELECT t.id, t.layer_id as layerId, t.asset_id as assetId, 
-                   t.target_name as targetName, t.weight, t.color, t.note,
-                   a.name as originalAssetName 
+                   t.weight, t.color, t.note,
+                   a.name as assetName 
             FROM strategy_targets t
             LEFT JOIN assets a ON t.asset_id = a.id
             ORDER BY t.sort_order ASC, t.weight DESC
@@ -22,8 +23,8 @@ export const StrategyService = {
                 const lTargets = targets.filter(t => t.layerId === l.id).map(t => ({
                     id: t.id,
                     assetId: t.assetId,
-                    // Use alias if exists, else fallback to asset name
-                    targetName: t.targetName || t.originalAssetName,
+                    // Use asset name from join (Source of Truth), fallback to ID if asset deleted
+                    targetName: t.assetName || 'Unknown Asset',
                     weight: t.weight,
                     color: t.color,
                     note: t.note
@@ -65,9 +66,10 @@ export const StrategyService = {
                     if (layer.items) {
                         for (let tIdx = 0; tIdx < layer.items.length; tIdx++) {
                             const item = layer.items[tIdx];
+                            // target_name removed from INSERT
                             await runQuery(
-                                "INSERT INTO strategy_targets (id, layer_id, asset_id, target_name, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                [uuidv4(), layerId, item.assetId, item.targetName, item.weight, item.color, item.note || '', tIdx]
+                                "INSERT INTO strategy_targets (id, layer_id, asset_id, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                [uuidv4(), layerId, item.assetId, item.weight, item.color, item.note || '', tIdx]
                             );
                         }
                     }
@@ -124,9 +126,10 @@ export const StrategyService = {
                             const item = layer.items[tIdx];
                             // Keep target ID if provided, else new
                             const itemId = (item.id && item.id.length > 10) ? item.id : uuidv4();
+                            // target_name removed from INSERT
                             await runQuery(
-                                "INSERT INTO strategy_targets (id, layer_id, asset_id, target_name, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                                [itemId, layerId, item.assetId, item.targetName, item.weight, item.color, item.note || '', tIdx]
+                                "INSERT INTO strategy_targets (id, layer_id, asset_id, weight, color, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                [itemId, layerId, item.assetId, item.weight, item.color, item.note || '', tIdx]
                             );
                         }
                     }

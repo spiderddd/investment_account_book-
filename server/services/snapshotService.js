@@ -32,63 +32,55 @@ export const SnapshotService = {
     },
 
     getHistoryGraph: async () => {
-        // OPTIMIZED: Fetch all data first, then aggregate in memory to avoid N+1 queries.
+        // PERFORMANCE OPTIMIZATION: 
+        // Instead of calculating each snapshot from scratch (O(Snapshots * Transactions)),
+        // we sort all data chronologically and maintain a running state (O(Transactions + Snapshots)).
         
-        // 1. Fetch all Snapshots (Time points)
+        // 1. Fetch all Raw Data
         const snapshots = await getQuery("SELECT id, date, total_value, total_invested FROM snapshots ORDER BY date ASC");
-        
-        // 2. Fetch all Transactions (The Flow)
         const allTxs = await getQuery("SELECT asset_id, date, quantity_change, cost_change FROM transactions ORDER BY date ASC");
-        
-        // 3. Fetch all Market Prices (The Valuation)
         const allPrices = await getQuery("SELECT asset_id, date, price FROM market_prices ORDER BY date ASC");
         
-        // 4. In-Memory Aggregation
-        // We will build the result by iterating snapshots and calculating state
-        // Group transactions and prices by Asset ID for faster lookup
-        const txsByAsset = new Map();
-        allTxs.forEach(tx => {
-            if (!txsByAsset.has(tx.asset_id)) txsByAsset.set(tx.asset_id, []);
-            txsByAsset.get(tx.asset_id).push(tx);
-        });
-
+        // 2. Prepare fast lookups
+        // Group prices by asset for easier lookup
         const pricesByAsset = new Map();
         allPrices.forEach(p => {
              if (!pricesByAsset.has(p.asset_id)) pricesByAsset.set(p.asset_id, []);
              pricesByAsset.get(p.asset_id).push(p);
         });
 
+        // 3. Initialize Running State
+        const runningState = new Map(); // assetId -> { quantity, totalCost }
+        let txCursor = 0;
+        const totalTxs = allTxs.length;
+
         const result = snapshots.map(s => {
             const snapshotDate = s.date;
             
-            // For each asset that has transactions, calculate its state at this snapshot date
-            const assetIds = new Set([...txsByAsset.keys()]); // Assets involved in transactions
-            
-            const assetsWithPrice = [];
-
-            for (const assetId of assetIds) {
-                const assetTxs = txsByAsset.get(assetId);
-                
-                // Aggregate Holdings up to snapshotDate
-                let quantity = 0;
-                let totalCost = 0;
-                
-                // Since assetTxs are ordered by date ASC, we can just iterate until we pass snapshotDate
-                // Optimization: Binary search is better for huge arrays, but linear scan is fine for personal finance scale
-                for (const tx of assetTxs) {
-                    if (tx.date > snapshotDate) break; // optimization due to sort
-                    quantity += tx.quantity_change;
-                    totalCost += tx.cost_change;
+            // Advance the transaction cursor up to the current snapshot date
+            // This ensures we only process each transaction once as we move through time.
+            while (txCursor < totalTxs && allTxs[txCursor].date <= snapshotDate) {
+                const tx = allTxs[txCursor];
+                if (!runningState.has(tx.asset_id)) {
+                    runningState.set(tx.asset_id, { quantity: 0, cost: 0 });
                 }
+                const state = runningState.get(tx.asset_id);
+                state.quantity += tx.quantity_change;
+                state.cost += tx.cost_change;
+                txCursor++;
+            }
 
-                // If quantity is effectively zero, skip this asset for this month
-                if (Math.abs(quantity) < 0.000001) continue;
+            // Calculate metrics for this snapshot based on current running state
+            const assetsWithPrice = [];
+            
+            for (const [assetId, state] of runningState.entries()) {
+                // Skip assets with effectively zero quantity
+                if (Math.abs(state.quantity) < 0.000001) continue;
 
                 // Find Price at snapshotDate
+                // Optimization: We could also maintain price cursors, but binary/reverse search is fast enough for price history
                 const assetPrices = pricesByAsset.get(assetId) || [];
                 let price = 0;
-                // Find the latest price <= snapshotDate
-                // Reverse iterate since we want the latest
                 for (let i = assetPrices.length - 1; i >= 0; i--) {
                     if (assetPrices[i].date <= snapshotDate) {
                         price = assetPrices[i].price;
@@ -98,10 +90,10 @@ export const SnapshotService = {
 
                 assetsWithPrice.push({
                     assetId: assetId,
-                    quantity: quantity,
+                    quantity: state.quantity,
                     unitPrice: price,
-                    marketValue: quantity * price,
-                    totalCost: totalCost
+                    marketValue: state.quantity * price,
+                    totalCost: state.cost
                 });
             }
 
