@@ -69,7 +69,7 @@ export interface AssetRecord {
 export interface SnapshotItem {
   id: string;
   date: string; // YYYY-MM
-  assets: AssetRecord[]; 
+  assets?: AssetRecord[]; // Optional: List views only need summaries
   totalValue: number; 
   totalInvested: number;
   note?: string; 

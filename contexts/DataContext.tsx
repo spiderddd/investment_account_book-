@@ -26,21 +26,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const refreshAssets = useCallback(async () => {
     try {
-      const data = await StorageService.getAssets(true);
+      const data = await StorageService.getAssets();
       setAssets(data);
     } catch (e) { console.error(e); }
   }, []);
 
   const refreshStrategies = useCallback(async () => {
     try {
-      const data = await StorageService.getStrategyVersions(true);
+      const data = await StorageService.getStrategyVersions();
       setStrategies(data);
     } catch (e) { console.error(e); }
   }, []);
 
   const refreshSnapshots = useCallback(async () => {
     try {
-      const data = await StorageService.getSnapshots(true);
+      const data = await StorageService.getSnapshots();
       setSnapshots(data);
     } catch (e) { console.error(e); }
   }, []);
@@ -48,7 +48,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const refreshAll = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Parallel fetch, StorageService will handle caching logic (initially null)
       const [a, st, sn] = await Promise.all([
         StorageService.getAssets(),
         StorageService.getStrategyVersions(),

@@ -5,46 +5,51 @@ import { db, runQuery, getQuery } from '../db.js';
 
 const router = express.Router();
 
+// 1. GET / - Lightweight Summary List (No Assets)
 router.get('/', async (req, res) => {
-    // Optimization: Build the JSON object with correct camelCase keys directly in SQL
     const sql = `
-        SELECT 
-            s.id, s.date, s.total_value as totalValue, s.total_invested as totalInvested, s.note,
-            json_group_array(
-                json_object(
-                    'id', p.id,
-                    'assetId', p.asset_id,
-                    'name', a.name,
-                    'category', a.type,
-                    'unitPrice', p.price,
-                    'quantity', p.quantity,
-                    'marketValue', (p.quantity * p.price),
-                    'totalCost', p.total_cost,
-                    'addedQuantity', p.added_quantity,
-                    'addedPrincipal', p.added_principal
-                )
-            ) as assets
-        FROM snapshots s
-        LEFT JOIN positions p ON s.id = p.snapshot_id
-        LEFT JOIN assets a ON p.asset_id = a.id
-        GROUP BY s.id
-        ORDER BY s.date DESC
+        SELECT id, date, total_value as totalValue, total_invested as totalInvested, note
+        FROM snapshots
+        ORDER BY date DESC
     `;
-
     try {
         const rows = await getQuery(sql);
-        const result = rows.map(row => ({
-            id: row.id,
-            date: row.date,
-            totalValue: row.totalValue,
-            totalInvested: row.totalInvested,
-            note: row.note,
-            assets: JSON.parse(row.assets).filter(x => x.id !== null)
-        }));
-        res.json(result);
+        res.json(rows);
     } catch (e) { res.status(500).json({error: e.message}); }
 });
 
+// 2. GET /:id - Full Details for a Single Snapshot
+router.get('/:id', async (req, res) => {
+    try {
+        // Get Header
+        const headerRows = await getQuery("SELECT id, date, total_value as totalValue, total_invested as totalInvested, note FROM snapshots WHERE id = ?", [req.params.id]);
+        if (headerRows.length === 0) return res.status(404).json({error: "Snapshot not found"});
+        
+        const snapshot = headerRows[0];
+
+        // Get Positions
+        const posSql = `
+            SELECT 
+                p.id, p.asset_id as assetId, 
+                a.name, a.type as category,
+                p.price as unitPrice, p.quantity, 
+                (p.quantity * p.price) as marketValue,
+                p.total_cost as totalCost,
+                p.added_quantity as addedQuantity,
+                p.added_principal as addedPrincipal
+            FROM positions p
+            LEFT JOIN assets a ON p.asset_id = a.id
+            WHERE p.snapshot_id = ?
+        `;
+        const positions = await getQuery(posSql, [req.params.id]);
+        
+        snapshot.assets = positions;
+        res.json(snapshot);
+
+    } catch (e) { res.status(500).json({error: e.message}); }
+});
+
+// 3. POST / - Save Snapshot (Transactional)
 router.post('/', async (req, res) => {
     const { date, assets, note } = req.body; 
     
@@ -66,6 +71,8 @@ router.post('/', async (req, res) => {
             if (row.length > 0) {
                 db.run("UPDATE snapshots SET total_value=?, total_invested=?, note=?, updated_at=? WHERE id=?", 
                     [totalValue, totalInvested, note, now, snapshotId]);
+                // Optimization: In a real prod app, we should diff/update, but for this scale, 
+                // replace-all within a transaction is acceptable if atomic.
                 db.run("DELETE FROM positions WHERE snapshot_id=?", [snapshotId]);
             } else {
                 db.run("INSERT INTO snapshots (id, date, total_value, total_invested, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
