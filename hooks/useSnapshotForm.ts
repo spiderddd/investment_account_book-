@@ -38,23 +38,24 @@ export const useSnapshotForm = (
             let prevDetails: SnapshotItem | null = null;
 
             if (snapshotId) {
+                // Editing existing mode
                 existing = await StorageService.getSnapshot(snapshotId);
             }
 
             const refDate = existing ? existing.date : baseDate;
             
-            // Find previous snapshot logic
-            let prevSummary = snapshots.find(s => s.date < refDate);
-            if (!prevSummary) {
-                // Try history if not in current page
-                const historyList = await StorageService.getSnapshotsHistory();
-                prevSummary = historyList.filter(s => s.date < refDate).sort((a, b) => b.date.localeCompare(a.date))[0];
-            } else {
-                 prevSummary = snapshots.filter(s => s.date < refDate).sort((a, b) => b.date.localeCompare(a.date))[0];
-            }
-            
-            if (prevSummary) {
-                prevDetails = await StorageService.getSnapshot(prevSummary.id);
+            // Optimization: Fetch previous snapshot specifically from backend
+            // Instead of searching through the (potentially incomplete) 'snapshots' list prop
+            try {
+                const res = await fetch(`/api/snapshots/previous/${refDate}`);
+                if (res.ok) {
+                    const prevData = await res.json();
+                    if (prevData && prevData.id) {
+                        prevDetails = prevData;
+                    }
+                }
+            } catch (err) {
+                console.warn("Failed to fetch previous snapshot, falling back to defaults", err);
             }
 
             if (existing) {
@@ -65,9 +66,6 @@ export const useSnapshotForm = (
                         const realAsset = assets.find(def => def.id === a.assetId);
                         const prevAsset = prevDetails?.assets?.find(pa => pa.assetId === a.assetId);
                         
-                        // Detect transaction type based on negative signs
-                        // Default to 'buy' (positive) if 0 or positive
-                        // If either quantity or cost change is negative, we assume it's a 'sell' operation
                         const isSell = a.addedQuantity < 0 || a.addedPrincipal < 0;
 
                         return {
@@ -77,17 +75,15 @@ export const useSnapshotForm = (
                             category: realAsset ? realAsset.type : a.category, 
                             price: a.unitPrice.toString(),
                             transactionType: isSell ? 'sell' : 'buy',
-                            // Convert to absolute string for input fields
                             quantityChange: Math.abs(a.addedQuantity).toString(),
                             costChange: Math.abs(a.addedPrincipal).toString(),
-                            // In edit mode, prev is current minus change, unless we have real prev data
                             prevQuantity: prevAsset ? prevAsset.quantity : (a.quantity - a.addedQuantity),
                             prevCost: prevAsset ? prevAsset.totalCost : (a.totalCost - a.addedPrincipal)
                         };
                     });
                 }
             } else {
-                // New Snapshot: Pre-fill from Strategy or Previous Holdings
+                // New Snapshot
                 if (activeStrategy && activeStrategy.layers) {
                     const allTargets = activeStrategy.layers.flatMap(l => l.items);
                     allTargets.forEach(item => {
@@ -109,6 +105,7 @@ export const useSnapshotForm = (
                     });
                 }
 
+                // Add assets held in previous month but not in strategy
                 if (prevDetails && prevDetails.assets) {
                     prevDetails.assets.forEach(a => {
                         const alreadyAdded = initialRows.find(r => r.assetId === a.assetId);
@@ -151,8 +148,6 @@ export const useSnapshotForm = (
             row.transactionType = value as 'buy' | 'sell';
         } else {
             row[field] = value;
-            // Auto-link quantity to cost for cash-like assets (Deposit/Withdraw)
-            // Note: value here is absolute, so we just copy it.
             if ((row.category === 'fixed' || row.category === 'wealth') && field === 'costChange') {
                 row.quantityChange = value;
             }
@@ -194,8 +189,6 @@ export const useSnapshotForm = (
     const prepareSubmission = (): SnapshotItem => {
         const finalAssets: AssetRecord[] = rows.map(r => {
             const price = (r.category === 'fixed' || r.category === 'wealth') ? 1 : (parseFloat(r.price) || 0);
-            
-            // Apply sign based on transaction type
             const sign = r.transactionType === 'sell' ? -1 : 1;
             
             const qChangeAbs = parseFloat(r.quantityChange) || 0;

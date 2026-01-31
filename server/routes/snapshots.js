@@ -21,6 +21,20 @@ router.get('/history', async (req, res) => {
     } catch (e) { sendError(res, e, "Snapshot History"); }
 });
 
+router.post('/recalculate', async (req, res) => {
+    try {
+        const result = await SnapshotService.recalculateCache();
+        sendSuccess(res, result);
+    } catch (e) { sendError(res, e, "Recalculate Cache"); }
+});
+
+router.get('/previous/:date', async (req, res) => {
+    try {
+        const data = await SnapshotService.getPrevious(req.params.date);
+        sendSuccess(res, data || {}); // Return empty object if no previous found
+    } catch (e) { sendError(res, e, "Get Previous Snapshot"); }
+});
+
 router.get('/:id', async (req, res) => {
     try {
         const data = await SnapshotService.getDetails(req.params.id);

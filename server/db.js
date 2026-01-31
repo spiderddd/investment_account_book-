@@ -51,7 +51,6 @@ CREATE TABLE IF NOT EXISTS strategy_targets (
     id TEXT PRIMARY KEY,
     layer_id TEXT NOT NULL,
     asset_id TEXT NOT NULL,
-    -- target_name removed: Always use asset name via JOIN
     weight REAL NOT NULL, 
     color TEXT,
     note TEXT,
@@ -60,37 +59,33 @@ CREATE TABLE IF NOT EXISTS strategy_targets (
     FOREIGN KEY(asset_id) REFERENCES assets(id)
 );
 
+-- Snapshots acts as a "Materialized View" (Cache) + "Monthly Log"
 CREATE TABLE IF NOT EXISTS snapshots (
     id TEXT PRIMARY KEY,
     date TEXT NOT NULL UNIQUE,
-    total_value REAL,
-    total_invested REAL,
-    note TEXT,
+    total_value REAL,    -- Derived/Cached Field
+    total_invested REAL, -- Derived/Cached Field
+    note TEXT,           -- User Content (Persistent)
     created_at INTEGER,
     updated_at INTEGER
 );
 
--- LEGACY TABLE 'positions' REMOVED. 
--- Data logic has fully migrated to 'transactions' (ledger) + 'market_prices' (time series).
-
--- Independent Price History (Crawler Friendly)
 CREATE TABLE IF NOT EXISTS market_prices (
     id TEXT PRIMARY KEY,
     asset_id TEXT NOT NULL,
     date TEXT NOT NULL,
     price REAL NOT NULL,
-    source TEXT DEFAULT 'manual', -- 'manual', 'crawler', 'system'
+    source TEXT DEFAULT 'manual', 
     updated_at INTEGER,
     UNIQUE(asset_id, date)
 );
 
--- Ledger / Transaction Table (Source of Truth for Quantity/Cost)
 CREATE TABLE IF NOT EXISTS transactions (
     id TEXT PRIMARY KEY,
     asset_id TEXT NOT NULL,
-    snapshot_id TEXT, -- Optional: Links transaction to a monthly closure for easier editing
+    snapshot_id TEXT, 
     date TEXT NOT NULL,
-    type TEXT, -- 'buy', 'sell', 'interest', 'adjustment'
+    type TEXT, 
     quantity_change REAL DEFAULT 0,
     cost_change REAL DEFAULT 0,
     note TEXT,
@@ -101,11 +96,14 @@ CREATE TABLE IF NOT EXISTS transactions (
 
 export const initDB = () => {
     db.serialize(() => {
-        db.run("PRAGMA foreign_keys = ON");
+        // Performance Optimization: Enable Write-Ahead Logging
+        // This makes SQLite perform much better for concurrent reads/writes (acting better as a cache)
+        db.run("PRAGMA journal_mode = WAL;");
+        db.run("PRAGMA foreign_keys = ON;");
+        
         db.exec(initSql, (err) => {
             if (err) console.error("DB Init Error:", err);
             else {
-                // Simple Migration Checks
                 const migrations = [
                     "ALTER TABLE assets ADD COLUMN note TEXT",
                     "CREATE INDEX IF NOT EXISTS idx_prices_asset_date ON market_prices(asset_id, date)",
@@ -137,11 +135,6 @@ export const getQuery = (sql, params = []) => new Promise((resolve, reject) => {
     });
 });
 
-/**
- * Executes a callback within a database transaction.
- * Automatically handles BEGIN, COMMIT, and ROLLBACK.
- * Returns the result of the callback.
- */
 export const withTransaction = async (callback) => {
     try {
         await runQuery("BEGIN TRANSACTION");
