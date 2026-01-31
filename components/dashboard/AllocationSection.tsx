@@ -104,7 +104,12 @@ export const AllocationSection: React.FC<AllocationSectionProps> = ({
                             <span className="w-32 text-right">占比 / 目标 (偏离)</span>
                         </div>
                         <div className="space-y-1">
-                            {allocationData.map((item: any) => (
+                            {allocationData.map((item: any) => {
+                                // Safety check for stale data during transition
+                                const deviation = item.deviation || 0;
+                                const targetPercent = item.targetPercent ?? '-';
+                                
+                                return (
                                 <div
                                     key={item.id || item.name}
                                     onClick={() => {
@@ -125,16 +130,18 @@ export const AllocationSection: React.FC<AllocationSectionProps> = ({
                                             <div className="flex flex-col items-end leading-tight">
                                                 <div className="flex items-baseline gap-1">
                                                     <span className="font-bold text-slate-800">{item.percent}%</span>
-                                                    <span className="text-xs text-slate-400">/ {item.targetPercent}%</span>
+                                                    <span className="text-xs text-slate-400">/ {targetPercent}%</span>
                                                 </div>
-                                                <span className={`text-[10px] font-medium ${Math.abs(item.deviation) > 2 ? (item.deviation > 0 ? 'text-amber-600' : 'text-blue-600') : 'text-slate-300'}`}>{item.deviation > 0 ? '+' : ''}{item.deviation.toFixed(1)}%</span>
+                                                <span className={`text-[10px] font-medium ${Math.abs(deviation) > 2 ? (deviation > 0 ? 'text-amber-600' : 'text-blue-600') : 'text-slate-300'}`}>
+                                                    {deviation > 0 ? '+' : ''}{deviation.toFixed(1)}%
+                                                </span>
                                             </div>
                                         ) : (
                                             <span className="font-bold text-slate-800 bg-slate-100 px-2 py-0.5 rounded text-xs">{item.percent}%</span>
                                         )}
                                     </div>
                                 </div>
-                            ))}
+                            )})}
                         </div>
                     </>
                 ) : (
